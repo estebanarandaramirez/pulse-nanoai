@@ -1,0 +1,26 @@
+[Unit]
+Description=PULSE NanoAI GPU Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulse
+Group=pulse
+WorkingDirectory=/opt/pulse-daemon
+Environment="PATH=/opt/pulse-daemon/venv/bin"
+ExecStart=/opt/pulse-daemon/venv/bin/python gpu_daemon.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+PrivateTmp=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/pulse-daemon/logs
+
+[Install]
+WantedBy=multi-user.target

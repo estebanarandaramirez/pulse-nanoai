@@ -1,0 +1,55 @@
+{
+  "name": "AutoRentConfig",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "string",
+      "enum": [
+        "Vast.ai",
+        "RunPod",
+        "Clore.ai",
+        "OctaSpace",
+        "Any"
+      ]
+    },
+    "gpu_model": {
+      "type": "string"
+    },
+    "max_price_hr": {
+      "type": "number"
+    },
+    "duration_hours": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "rented",
+        "failed"
+      ]
+    },
+    "last_rented_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rental_tx": {
+      "type": "string"
+    },
+    "user_email": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "label",
+    "platform",
+    "gpu_model",
+    "max_price_hr",
+    "duration_hours",
+    "status"
+  ]
+}

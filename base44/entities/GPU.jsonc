@@ -1,0 +1,57 @@
+{
+  "name": "GPU",
+  "type": "object",
+  "properties": {
+    "gpu_id": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "idle",
+        "offline",
+        "maintenance"
+      ]
+    },
+    "rate_per_hour": {
+      "type": "number"
+    },
+    "uptime_percent": {
+      "type": "number"
+    },
+    "total_earned_usd": {
+      "type": "number"
+    },
+    "vram_gb": {
+      "type": "number"
+    },
+    "location": {
+      "type": "string"
+    },
+    "pls_minted": {
+      "type": "number"
+    },
+    "last_heartbeat": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "user_email": {
+      "type": "string"
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "daily_earned_usd": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "gpu_id",
+    "model",
+    "status"
+  ]
+}

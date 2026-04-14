@@ -1,0 +1,17 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user"
+      ]
+    },
+    "solana_wallet": {
+      "type": "string",
+      "description": "User's Phantom wallet public key on Solana devnet"
+    }
+  }
+}

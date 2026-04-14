@@ -1,0 +1,27 @@
+{
+  "name": "PriceSnapshot",
+  "type": "object",
+  "properties": {
+    "gpu_model": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "string"
+    },
+    "price_hr": {
+      "type": "number"
+    },
+    "avg_price_hr": {
+      "type": "number"
+    },
+    "snapshot_date": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "gpu_model",
+    "platform",
+    "price_hr",
+    "snapshot_date"
+  ]
+}

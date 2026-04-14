@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.salad.com)",
+      "WebFetch(domain:api.salad.com)",
+      "WebFetch(domain:salad.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(ls /c/Users/itzva/Downloads/beneficial-deep-work-flow/.env*)",
+      "WebFetch(domain:chatgpt.com)"
+    ]
+  }
+}

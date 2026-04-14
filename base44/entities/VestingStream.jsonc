@@ -1,0 +1,45 @@
+{
+  "name": "VestingStream",
+  "type": "object",
+  "properties": {
+    "total_pls": {
+      "type": "number"
+    },
+    "claimed_pls": {
+      "type": "number"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "gpu_revenue",
+        "bonus",
+        "referral"
+      ]
+    },
+    "user_email": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "total_pls",
+    "claimed_pls",
+    "status",
+    "source"
+  ]
+}

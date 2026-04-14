@@ -1,0 +1,47 @@
+{
+  "name": "RentalRecord",
+  "type": "object",
+  "properties": {
+    "platform": {
+      "type": "string",
+      "enum": [
+        "Vast.ai",
+        "Clore.ai",
+        "RunPod",
+        "OctaSpace"
+      ]
+    },
+    "gpu_model": {
+      "type": "string"
+    },
+    "hours_rented": {
+      "type": "number"
+    },
+    "cost_per_hour": {
+      "type": "number"
+    },
+    "total_cost": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "platform",
+    "gpu_model",
+    "hours_rented",
+    "cost_per_hour",
+    "total_cost",
+    "status"
+  ]
+}

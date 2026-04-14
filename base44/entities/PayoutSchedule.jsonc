@@ -1,0 +1,58 @@
+{
+  "name": "PayoutSchedule",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "frequency": {
+      "type": "string",
+      "enum": [
+        "daily",
+        "weekly",
+        "monthly"
+      ]
+    },
+    "payout_type": {
+      "type": "string",
+      "enum": [
+        "sol",
+        "token"
+      ]
+    },
+    "pool_amount": {
+      "type": "number"
+    },
+    "min_holder_balance": {
+      "type": "number"
+    },
+    "is_active": {
+      "type": "boolean"
+    },
+    "last_run_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_run_status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "pending"
+      ]
+    },
+    "last_run_tx_count": {
+      "type": "number"
+    },
+    "created_by_email": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "label",
+    "frequency",
+    "payout_type",
+    "pool_amount",
+    "is_active"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "name": "RentalSimulation",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "string"
+    },
+    "gpu_model": {
+      "type": "string"
+    },
+    "price_per_hr": {
+      "type": "number"
+    },
+    "training_hours": {
+      "type": "number"
+    },
+    "power_cost_per_hr": {
+      "type": "number"
+    },
+    "token_rewards_per_hr": {
+      "type": "number"
+    },
+    "token_price_usd": {
+      "type": "number"
+    },
+    "expected_revenue_usd": {
+      "type": "number"
+    },
+    "total_cost": {
+      "type": "number"
+    },
+    "total_revenue": {
+      "type": "number"
+    },
+    "net_profit": {
+      "type": "number"
+    },
+    "roi_percent": {
+      "type": "number"
+    },
+    "break_even_hours": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "label",
+    "gpu_model",
+    "platform"
+  ]
+}

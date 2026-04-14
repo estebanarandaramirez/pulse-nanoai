@@ -1,0 +1,69 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { Keypair, Connection, LAMPORTS_PER_SOL } from 'npm:@solana/web3.js@1.98.0';
+import { getAssociatedTokenAddress, getAccount } from 'npm:@solana/spl-token@0.4.9';
+import bs58 from 'npm:bs58@6.0.0';
+
+Deno.serve(async (req) => {
+  const base44 = createClientFromRequest(req);
+  try {
+    const user = await base44.auth.me();
+    if (user?.role !== 'admin') return Response.json({ error: 'Admin only' }, { status: 403 });
+  } catch {}
+
+  const treasuryKey = Deno.env.get('TREASURY_PRIVATE_KEY');
+  if (!treasuryKey) return Response.json({ error: 'TREASURY_PRIVATE_KEY not set' }, { status: 500 });
+
+  // Auto-detect key format: base58 string OR JSON uint8 array
+  let secretBytes;
+  let detectedFormat = 'unknown';
+  const trimmed = treasuryKey.trim();
+  try {
+    if (trimmed.startsWith('[')) {
+      // JSON array format: [12, 34, 56, ...]
+      secretBytes = Uint8Array.from(JSON.parse(trimmed));
+      detectedFormat = 'json_array';
+    } else {
+      // Base58 format
+      secretBytes = bs58.decode(trimmed);
+      detectedFormat = 'base58';
+    }
+  } catch (e) {
+    return Response.json({ error: `Failed to parse key: ${e.message}`, raw_length: trimmed.length, first_chars: trimmed.slice(0, 10) }, { status: 500 });
+  }
+
+  const keypair = Keypair.fromSecretKey(secretBytes);
+  const address = keypair.publicKey.toBase58();
+
+  const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+  const balance = await connection.getBalance(keypair.publicKey);
+
+  // Check PULSE token balance
+  const PULSE_MINT_ADDR = '2ZkHDUequTHPWQtmJj2AjBAuE1TjuZoWKewnn2Hb6H9p';
+  let pulse_balance = 0;
+  try {
+    const { PublicKey } = await import('npm:@solana/web3.js@1.98.0');
+    const ata = await getAssociatedTokenAddress(new PublicKey(PULSE_MINT_ADDR), keypair.publicKey);
+    const acc = await getAccount(connection, ata);
+    pulse_balance = Number(acc.amount) / 1_000_000;
+  } catch { /* no token account yet */ }
+
+  // Fetch SOL price for USD estimate
+  let sol_usd = 130;
+  try {
+    const pr = await fetch('https://price.jup.ag/v6/price?ids=SOL');
+    const pd = await pr.json();
+    sol_usd = pd?.data?.SOL?.price || 130;
+  } catch {}
+
+  return Response.json({
+    treasury_address: address,
+    balance_sol: balance / LAMPORTS_PER_SOL,
+    balance_usd: parseFloat(((balance / LAMPORTS_PER_SOL) * sol_usd).toFixed(2)),
+    pulse_balance,
+    sol_price_usd: sol_usd,
+    network: 'mainnet',
+    detected_key_format: detectedFormat,
+    key_byte_length: secretBytes.length,
+    ready_for_distribution: pulse_balance > 0 ? 'YES — has PULSE tokens' : 'PENDING — run a distribution cycle to acquire PULSE via Jupiter swap',
+  });
+});

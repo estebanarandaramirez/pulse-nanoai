@@ -1,0 +1,51 @@
+{
+  "name": "PriceAlert",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "string",
+      "enum": [
+        "Vast.ai",
+        "RunPod",
+        "Clore.ai",
+        "OctaSpace",
+        "Any"
+      ]
+    },
+    "gpu_model": {
+      "type": "string"
+    },
+    "alert_type": {
+      "type": "string",
+      "enum": [
+        "below",
+        "above"
+      ]
+    },
+    "threshold": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "triggered",
+        "paused"
+      ]
+    },
+    "user_email": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "label",
+    "platform",
+    "gpu_model",
+    "alert_type",
+    "threshold",
+    "status"
+  ]
+}

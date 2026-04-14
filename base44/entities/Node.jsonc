@@ -1,0 +1,37 @@
+{
+  "name": "Node",
+  "type": "object",
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["Salad", "Vast.ai", "RunPod", "Clore.ai", "OctaSpace"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["filling", "active", "full", "maintenance"]
+    },
+    "gpu_count": {
+      "type": "number"
+    },
+    "target_gpu_count": {
+      "type": "number"
+    },
+    "total_earnings_usd": {
+      "type": "number"
+    },
+    "daily_earnings_usd": {
+      "type": "number"
+    },
+    "last_synced": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": ["node_id", "name", "platform", "status"]
+}

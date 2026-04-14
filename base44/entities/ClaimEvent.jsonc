@@ -1,0 +1,27 @@
+{
+  "name": "ClaimEvent",
+  "type": "object",
+  "properties": {
+    "amount_pls": {
+      "type": "number"
+    },
+    "tx_hash": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "confirmed",
+        "failed"
+      ]
+    },
+    "user_email": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "amount_pls",
+    "status"
+  ]
+}

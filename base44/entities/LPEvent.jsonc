@@ -1,0 +1,40 @@
+{
+  "name": "LPEvent",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "injection",
+        "rebalance",
+        "withdrawal"
+      ]
+    },
+    "amount_usdc": {
+      "type": "number"
+    },
+    "amount_pls": {
+      "type": "number"
+    },
+    "tx_hash": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "confirmed",
+        "failed"
+      ]
+    },
+    "pool_depth_after": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "type",
+    "amount_usdc",
+    "amount_pls",
+    "status"
+  ]
+}
