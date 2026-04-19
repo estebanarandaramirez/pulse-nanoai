@@ -59,9 +59,8 @@ Deno.serve(async (req) => {
       // Price unit from Salad API is USD per hour as a float.
       const displayPrice = cls.prices?.find((p: any) => p.priority === DISPLAY_PRIORITY);
       const fallbackPrice = cls.prices?.[0];
-      const priceUsd = parseFloat(
-        ((displayPrice || fallbackPrice)?.price ?? 0).toFixed(4)
-      );
+      const rawPrice = parseFloat((displayPrice || fallbackPrice)?.price ?? 0);
+      const priceUsd = parseFloat(rawPrice.toFixed(4));
 
       gpuClassMap[cls.id] = { name: cls.name, price_per_hour: priceUsd };
 
@@ -72,7 +71,7 @@ Deno.serve(async (req) => {
         // Also expose all priority tiers for the UI
         prices: (cls.prices || []).map((p: any) => ({
           priority: p.priority,
-          price_per_hour: parseFloat((p.price ?? 0).toFixed(4)),
+          price_per_hour: parseFloat(parseFloat(p.price ?? 0).toFixed(4)),
         })),
       };
     });
