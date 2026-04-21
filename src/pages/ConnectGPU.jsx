@@ -54,8 +54,11 @@ export default function ConnectGPU() {
     setLoading(false);
   };
 
+  const [scriptError, setScriptError] = useState(null);
+
   const downloadSetupScript = async () => {
     setScriptLoading(true);
+    setScriptError(null);
     try {
       const token = localStorage.getItem("base44_access_token");
       const appId = import.meta.env.VITE_BASE44_APP_ID;
@@ -70,6 +73,12 @@ export default function ConnectGPU() {
           body: JSON.stringify({ platform: "Clore.ai", user_token: token }),
         }
       );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setScriptError(err.error ?? `Server error ${res.status}`);
+        setScriptLoading(false);
+        return;
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -78,7 +87,7 @@ export default function ConnectGPU() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      console.error("Failed to download setup script", e);
+      setScriptError("Network error — could not reach server.");
     }
     setScriptLoading(false);
   };
@@ -114,6 +123,11 @@ export default function ConnectGPU() {
             {scriptLoading ? "Generating..." : "pulse-setup.ps1"}
           </button>
         </div>
+        {scriptError && (
+          <div className="mt-3 px-3 py-2 bg-pulse-red/10 border border-pulse-red/30 rounded text-[9px] font-mono text-pulse-red">
+            {scriptError}
+          </div>
+        )}
       </div>
 
       {/* Progress steps */}
