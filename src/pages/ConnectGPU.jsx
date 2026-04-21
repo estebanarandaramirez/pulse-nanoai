@@ -106,11 +106,11 @@ export default function ConnectGPU() {
       <div className="bg-card border border-cyan/30 rounded-md p-4 relative card-gradient-top">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-[10px] font-mono tracking-[2px] uppercase text-cyan mb-1">Step 1 — Download &amp; Run Setup Script</div>
+            <div className="text-[10px] font-mono tracking-[2px] uppercase text-cyan mb-1">Step 1 — Download &amp; Run Setup</div>
             <p className="text-[9px] font-mono text-muted-foreground leading-relaxed">
-              Right-click <span className="text-foreground">pulse-setup.ps1</span> → <span className="text-foreground">Run with PowerShell</span>.<br />
-              A window will appear briefly, then a <span className="text-foreground">UAC prompt</span> will pop up — click <span className="text-neon-green font-semibold">Yes</span> to continue.<br />
-              <span className="text-muted-foreground/70">(If the window closes and nothing happens, check your taskbar for the UAC dialog.)</span>
+              Download and <span className="text-foreground">double-click</span> <span className="text-cyan">pulse-setup.bat</span>.<br />
+              A UAC dialog will appear — click <span className="text-neon-green font-semibold">Yes</span> to allow it to run.<br />
+              <span className="text-muted-foreground/70">No PowerShell setup needed — just double-click and approve.</span>
             </p>
           </div>
           <button
@@ -121,7 +121,7 @@ export default function ConnectGPU() {
             {scriptLoading
               ? <div className="w-3 h-3 border border-cyan border-t-transparent rounded-full animate-spin" />
               : <Download className="w-3 h-3" />}
-            {scriptLoading ? "Generating..." : "pulse-setup.ps1"}
+            {scriptLoading ? "Generating..." : "pulse-setup.bat"}
           </button>
         </div>
         {scriptError && (
