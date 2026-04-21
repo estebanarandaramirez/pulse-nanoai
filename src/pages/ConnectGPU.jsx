@@ -106,10 +106,11 @@ export default function ConnectGPU() {
       <div className="bg-card border border-cyan/30 rounded-md p-4 relative card-gradient-top">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-[10px] font-mono tracking-[2px] uppercase text-cyan mb-1">Step 1 — Download Setup Script</div>
-            <p className="text-[9px] font-mono text-muted-foreground">
-              Run this on your Windows machine to install WSL2 + Clore.ai and start earning.
-              Right-click the file → <span className="text-foreground">Run with PowerShell</span>.
+            <div className="text-[10px] font-mono tracking-[2px] uppercase text-cyan mb-1">Step 1 — Download &amp; Run Setup Script</div>
+            <p className="text-[9px] font-mono text-muted-foreground leading-relaxed">
+              Right-click <span className="text-foreground">pulse-setup.ps1</span> → <span className="text-foreground">Run with PowerShell</span>.<br />
+              A window will appear briefly, then a <span className="text-foreground">UAC prompt</span> will pop up — click <span className="text-neon-green font-semibold">Yes</span> to continue.<br />
+              <span className="text-muted-foreground/70">(If the window closes and nothing happens, check your taskbar for the UAC dialog.)</span>
             </p>
           </div>
           <button

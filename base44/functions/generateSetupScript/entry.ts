@@ -75,7 +75,17 @@ function Show-Banner {
 function Require-Admin {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host "  Relaunching as Administrator..." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  ============================================" -ForegroundColor Cyan
+        Write-Host "   PULSE GPU Setup" -ForegroundColor Cyan
+        Write-Host "  ============================================" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  Administrator access is required." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  A UAC prompt will appear — click YES to continue." -ForegroundColor White
+        Write-Host "  (Check your taskbar if you don't see it)" -ForegroundColor DarkGray
+        Write-Host ""
+        Start-Sleep 3
         Start-Process powershell "-NoProfile -ExecutionPolicy Bypass -File \`"$PSCommandPath\`"" -Verb RunAs
         exit
     }
