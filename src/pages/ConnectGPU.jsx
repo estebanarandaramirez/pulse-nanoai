@@ -39,7 +39,7 @@ export default function ConnectGPU() {
     } catch {
       const userRate = 0.18; // fallback: 60% of ~$0.30/hr
       setResult({
-        gpu_id: `VAST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        gpu_id: `CLORE-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
         gpu_name: detected.name,
         vram_gb: detected.vram,
         platform: "Clore.ai",
@@ -91,6 +91,29 @@ export default function ConnectGPU() {
         <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">
           Connect GPU
         </h1>
+      </div>
+
+      {/* Setup script download — always visible */}
+      <div className="bg-card border border-cyan/30 rounded-md p-4 relative card-gradient-top">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-mono tracking-[2px] uppercase text-cyan mb-1">Step 1 — Download Setup Script</div>
+            <p className="text-[9px] font-mono text-muted-foreground">
+              Run this on your Windows machine to install WSL2 + Clore.ai and start earning.
+              Right-click the file → <span className="text-foreground">Run with PowerShell</span>.
+            </p>
+          </div>
+          <button
+            onClick={downloadSetupScript}
+            disabled={scriptLoading}
+            className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-cyan/10 border border-cyan/40 hover:border-cyan hover:bg-cyan/20 rounded-md text-[10px] font-mono text-cyan transition-all"
+          >
+            {scriptLoading
+              ? <div className="w-3 h-3 border border-cyan border-t-transparent rounded-full animate-spin" />
+              : <Download className="w-3 h-3" />}
+            {scriptLoading ? "Generating..." : "pulse-setup.ps1"}
+          </button>
+        </div>
       </div>
 
       {/* Progress steps */}
@@ -145,28 +168,6 @@ export default function ConnectGPU() {
                 {result.clore_server_id ? ` · Server #${result.clore_server_id}` : ""}
               </div>
             </div>
-          </div>
-
-          {/* Setup script CTA */}
-          <div className="bg-card border border-amber/30 rounded-md p-4 relative card-gradient-top">
-            <SectionTitle>Run Setup on Your Machine</SectionTitle>
-            <p className="text-[9px] font-mono text-muted-foreground mt-2 mb-3">
-              Download and run this script on your machine to install the Clore.ai host client
-              under Pulse's account. Your GPU will start accepting jobs automatically.
-            </p>
-            <div className="bg-muted/40 rounded-md px-3 py-2 font-mono text-[10px] text-amber mb-3">
-              Right-click → Run with PowerShell
-            </div>
-            <button
-              onClick={downloadSetupScript}
-              disabled={scriptLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-amber/10 border border-amber/40 hover:border-amber hover:bg-amber/20 rounded-md text-[10px] font-mono text-amber transition-all"
-            >
-              {scriptLoading
-                ? <div className="w-3 h-3 border border-amber border-t-transparent rounded-full animate-spin" />
-                : <Download className="w-3 h-3" />}
-              {scriptLoading ? "Generating..." : "Download pulse-setup.ps1"}
-            </button>
           </div>
 
           {/* Node info */}
@@ -226,7 +227,7 @@ export default function ConnectGPU() {
             <SectionTitle>Revenue Split</SectionTitle>
             <div className="mt-3 h-4 rounded-full overflow-hidden bg-muted flex">
               <div className="h-full bg-cyan" style={{ width: "60%" }} title="60% You" />
-              <div className="h-full bg-amber/70" style={{ width: "40%" }} title="40% Pulse" />
+              <div className="h-full" style={{ width: "40%", backgroundColor: "var(--amber)" }} title="40% Pulse" />
             </div>
             <div className="flex justify-between mt-2">
               <span className="text-[9px] font-mono text-cyan">60% — You</span>

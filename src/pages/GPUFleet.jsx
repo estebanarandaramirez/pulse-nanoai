@@ -16,9 +16,9 @@ const MOCK_FLEET = [
 ];
 
 const MOCK_MARKET = [
-  { source: "Vast.ai", gpu: "RTX 4090", vram: 24, price_hr: 0.847, location: "US", status: "available" },
-  { source: "Vast.ai", gpu: "A100", vram: 80, price_hr: 1.890, location: "EU", status: "rented" },
   { source: "Clore.ai", gpu: "RTX 4090", vram: 24, price_hr: 0.802, location: "US", status: "available" },
+  { source: "Clore.ai", gpu: "A100", vram: 80, price_hr: 1.750, location: "EU", status: "rented" },
+  { source: "Clore.ai", gpu: "RTX 4090", vram: 24, price_hr: 0.810, location: "US", status: "available" },
   { source: "Clore.ai", gpu: "RTX 3090", vram: 24, price_hr: 0.298, location: "EU", status: "available" },
   { source: "RunPod", gpu: "H100", vram: 80, price_hr: 2.890, location: "US", status: "rented" },
   { source: "RunPod", gpu: "RTX 4090", vram: 24, price_hr: 0.890, location: "US", status: "available" },
@@ -37,7 +37,16 @@ export default function GPUFleet() {
     setLoading(true);
     try {
       const data = await base44.entities.GPU.list();
-      if (data?.length) setGpus(data);
+      if (data?.length) {
+        // Deduplicate: keep only the most recent record per user+model combination
+        const seen = new Map();
+        [...data].sort((a, b) => new Date(b.last_heartbeat || 0) - new Date(a.last_heartbeat || 0))
+          .forEach(g => {
+            const key = `${g.user_email}|${g.model}`;
+            if (!seen.has(key)) seen.set(key, g);
+          });
+        setGpus([...seen.values()]);
+      }
     } catch {}
     setLoading(false);
   };

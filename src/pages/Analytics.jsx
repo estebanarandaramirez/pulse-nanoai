@@ -13,9 +13,8 @@ const MONTHLY = [
   { month: "Apr", revenue: 46800, pls: 468000, gpus: 500 },
 ];
 
-// Other providers are gated — Salad is the active platform.
 const PLATFORM_SPLIT = [
-  { platform: "Salad", revenue: 46800, pct: 100 },
+  { platform: "Clore.ai", revenue: 46800, pct: 100 },
 ];
 
 const CTooltip = ({ active, payload, label }) => {
@@ -97,7 +96,7 @@ export default function Analytics() {
             </div>
           ))}
           <p className="text-[8px] font-mono text-muted-foreground pt-1">
-            Other providers (Vast.ai, RunPod, Clore.ai, OctaSpace) are currently gated.
+            Other providers (RunPod, OctaSpace) are currently gated.
           </p>
         </div>
       </div>

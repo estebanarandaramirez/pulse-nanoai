@@ -4,7 +4,6 @@ import { base44 } from "@/api/base44Client";
 import SectionTitle from "../components/shared/SectionTitle";
 import { format, subDays } from "date-fns";
 
-// GPU model names matching Salad's GPU class names
 const GPU_MODELS = [
   "NVIDIA RTX 4090",
   "NVIDIA RTX 3090",
@@ -13,22 +12,18 @@ const GPU_MODELS = [
   "NVIDIA A100 SXM4 80GB",
 ];
 
-// Salad-specific baseline prices (USD/hr, medium priority)
-// Updated when real API data is loaded.
 const DEFAULT_BASE_PRICES = {
-  "NVIDIA RTX 4090":        0.45,
-  "NVIDIA RTX 3090":        0.12,
-  "NVIDIA RTX 3080":        0.09,
-  "NVIDIA RTX 3070":        0.07,
+  "NVIDIA RTX 4090":        0.72,
+  "NVIDIA RTX 3090":        0.25,
+  "NVIDIA RTX 3080":        0.15,
+  "NVIDIA RTX 3070":        0.10,
   "NVIDIA A100 SXM4 80GB":  1.60,
 };
 
-// Simulate 30-day Salad price history from a base price.
-// Salad prices are relatively stable; we model ±5% day-to-day variance.
-function genSaladHistory(basePrice, days = 30) {
+function genCloreHistory(basePrice, days = 30) {
   return Array.from({ length: days }, (_, i) => ({
     date: format(subDays(new Date(), days - 1 - i), "MMM d"),
-    Salad: parseFloat((basePrice * (0.95 + Math.random() * 0.1)).toFixed(3)),
+    "Clore.ai": parseFloat((basePrice * (0.95 + Math.random() * 0.1)).toFixed(3)),
   }));
 }
 
@@ -51,23 +46,22 @@ const CTooltip = ({ active, payload, label }) => {
 export default function PriceHistory() {
   const [gpu, setGpu] = useState(GPU_MODELS[0]);
   const [basePrices, setBasePrices] = useState(DEFAULT_BASE_PRICES);
-  const [data, setData] = useState(() => genSaladHistory(DEFAULT_BASE_PRICES[GPU_MODELS[0]]));
+  const [data, setData] = useState(() => genCloreHistory(DEFAULT_BASE_PRICES[GPU_MODELS[0]]));
   const [loadingRates, setLoadingRates] = useState(true);
 
-  // Fetch real Salad GPU class prices on mount
   useEffect(() => {
     setLoadingRates(true);
     base44.functions
-      .invoke("fetchSaladEarnings", {})
+      .invoke("fetchCloreaiEarnings", {})
       .then(res => {
-        const classes = res.data?.gpu_classes || [];
-        if (classes.length > 0) {
+        const servers = res.data?.server_list || [];
+        if (servers.length > 0) {
           const updated = { ...DEFAULT_BASE_PRICES };
-          for (const cls of classes) {
-            if (cls.name && cls.price_per_hour != null) {
-              updated[cls.name] = cls.price_per_hour;
+          servers.forEach(s => {
+            if (s.gpu_model && s.price_per_hour != null && updated[s.gpu_model] !== undefined) {
+              updated[s.gpu_model] = Math.max(updated[s.gpu_model], s.price_per_hour);
             }
-          }
+          });
           setBasePrices(updated);
         }
       })
@@ -78,20 +72,18 @@ export default function PriceHistory() {
   // Regenerate chart data whenever GPU or base prices change
   useEffect(() => {
     const base = basePrices[gpu] ?? 0.3;
-    setData(genSaladHistory(base));
+    setData(genCloreHistory(base));
 
-    // Also fetch real stored snapshots if any exist
     base44.entities.PriceSnapshot
       .filter({ gpu_model: gpu }, "-created_date", 100)
       .then(snapshots => {
         if (snapshots && snapshots.length >= 7) {
-          // If we have enough real snapshots, build chart from them
           const chartData = snapshots
             .slice(0, 30)
             .reverse()
             .map(s => ({
               date: format(new Date(s.created_date), "MMM d"),
-              Salad: s.price_usd ?? s.rate_per_hour ?? base,
+              "Clore.ai": s.price_usd ?? s.rate_per_hour ?? base,
             }));
           setData(chartData);
         }
@@ -102,8 +94,8 @@ export default function PriceHistory() {
   const currentPrice = basePrices[gpu] ?? 0;
   const latest = data[data.length - 1] ?? {};
   const oldest = data[0] ?? {};
-  const priceChange = oldest.Salad
-    ? (((latest.Salad - oldest.Salad) / oldest.Salad) * 100).toFixed(1)
+  const priceChange = oldest["Clore.ai"]
+    ? (((latest["Clore.ai"] - oldest["Clore.ai"]) / oldest["Clore.ai"]) * 100).toFixed(1)
     : "0.0";
 
   return (
@@ -114,7 +106,7 @@ export default function PriceHistory() {
           Price History
         </h1>
         <span className="px-2 py-0.5 bg-cyan/10 border border-cyan/30 rounded text-[9px] tracking-[2px] uppercase font-mono text-cyan">
-          Salad
+          Clore.ai
         </span>
       </div>
 
@@ -138,7 +130,7 @@ export default function PriceHistory() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="bg-card border border-cyan/30 rounded-md p-4 relative card-gradient-top">
           <div className="text-[9px] tracking-[1.5px] uppercase text-muted-foreground mb-1">
-            Current Rate (Salad)
+            Current Rate (Clore.ai)
           </div>
           {loadingRates ? (
             <div className="w-4 h-4 border-2 border-cyan border-t-transparent rounded-full animate-spin mt-1" />
@@ -147,7 +139,7 @@ export default function PriceHistory() {
               ${currentPrice.toFixed(3)}/hr
             </div>
           )}
-          <div className="text-[8px] text-muted-foreground mt-1">medium priority · live</div>
+          <div className="text-[8px] text-muted-foreground mt-1">on-demand · live</div>
         </div>
 
         <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
@@ -164,7 +156,7 @@ export default function PriceHistory() {
           <div className="text-[9px] tracking-[1.5px] uppercase text-muted-foreground mb-1">
             Active Platform
           </div>
-          <div className="text-xl font-display font-bold text-cyan">Salad</div>
+          <div className="text-xl font-display font-bold text-cyan">Clore.ai</div>
           <div className="text-[8px] text-muted-foreground mt-1">
             Other providers gated
           </div>
@@ -174,7 +166,7 @@ export default function PriceHistory() {
       {/* 30-day price chart */}
       <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
         <SectionTitle>
-          {gpu.replace("NVIDIA ", "")} — 30-Day Price on Salad
+          {gpu.replace("NVIDIA ", "")} — 30-Day Price on Clore.ai
         </SectionTitle>
         <div className="mt-4 h-56">
           <ResponsiveContainer width="100%" height="100%">
@@ -196,7 +188,7 @@ export default function PriceHistory() {
               <Tooltip content={<CTooltip />} />
               <Line
                 type="monotone"
-                dataKey="Salad"
+                dataKey="Clore.ai"
                 stroke={PLATFORM_COLOR}
                 strokeWidth={2}
                 dot={false}

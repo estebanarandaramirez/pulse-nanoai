@@ -7,16 +7,15 @@ import SectionTitle from "../components/shared/SectionTitle";
 import { Clock, DollarSign, Activity } from "lucide-react";
 import { format } from "date-fns";
 
-// Salad is the active provider — other providers are gated.
 const MOCK_RECORDS = [
-  { id: "1", platform: "Salad", gpu_model: "NVIDIA RTX 4090",       hours_rented: 12, cost_per_hour: 0.450, total_cost: 5.40,  status: "completed", started_at: new Date(Date.now() - 86400000 * 2).toISOString() },
-  { id: "2", platform: "Salad", gpu_model: "NVIDIA A100 SXM4 80GB", hours_rented: 6,  cost_per_hour: 1.600, total_cost: 9.60,  status: "completed", started_at: new Date(Date.now() - 86400000 * 3).toISOString() },
-  { id: "3", platform: "Salad", gpu_model: "NVIDIA RTX 4090",       hours_rented: 24, cost_per_hour: 0.450, total_cost: 10.80, status: "active",    started_at: new Date(Date.now() - 3600000 * 5).toISOString() },
-  { id: "4", platform: "Salad", gpu_model: "NVIDIA RTX 3090",       hours_rented: 8,  cost_per_hour: 0.120, total_cost: 0.96,  status: "completed", started_at: new Date(Date.now() - 86400000 * 5).toISOString() },
-  { id: "5", platform: "Salad", gpu_model: "NVIDIA RTX 3080",       hours_rented: 10, cost_per_hour: 0.090, total_cost: 0.90,  status: "completed", started_at: new Date(Date.now() - 86400000 * 7).toISOString() },
+  { id: "1", platform: "Clore.ai", gpu_model: "NVIDIA RTX 4090",       hours_rented: 12, cost_per_hour: 0.720, total_cost: 8.64,  status: "completed", started_at: new Date(Date.now() - 86400000 * 2).toISOString() },
+  { id: "2", platform: "Clore.ai", gpu_model: "NVIDIA A100 SXM4 80GB", hours_rented: 6,  cost_per_hour: 1.600, total_cost: 9.60,  status: "completed", started_at: new Date(Date.now() - 86400000 * 3).toISOString() },
+  { id: "3", platform: "Clore.ai", gpu_model: "NVIDIA RTX 4090",       hours_rented: 24, cost_per_hour: 0.720, total_cost: 17.28, status: "active",    started_at: new Date(Date.now() - 3600000 * 5).toISOString() },
+  { id: "4", platform: "Clore.ai", gpu_model: "NVIDIA RTX 3090",       hours_rented: 8,  cost_per_hour: 0.250, total_cost: 2.00,  status: "completed", started_at: new Date(Date.now() - 86400000 * 5).toISOString() },
+  { id: "5", platform: "Clore.ai", gpu_model: "NVIDIA RTX 3080",       hours_rented: 10, cost_per_hour: 0.150, total_cost: 1.50,  status: "completed", started_at: new Date(Date.now() - 86400000 * 7).toISOString() },
 ];
 
-const PLATFORM_COLORS = { "Salad": "#00e5ff" };
+const PLATFORM_COLORS = { "Clore.ai": "#00e5ff" };
 const PIE_COLORS = ["#00e5ff", "#39ff14", "#ffaa00", "#8844ff"];
 
 const CTooltip = ({ active, payload }) => {

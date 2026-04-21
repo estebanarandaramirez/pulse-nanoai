@@ -46,7 +46,10 @@ Deno.serve(async (req) => {
   const gpu_id = `CLORE-${gpu_model.replace(/\s+/g, '')}-${(serverId ?? Math.random().toString(36).slice(2, 6)).toString().toUpperCase()}`;
 
   try {
-    const existing = await base44.entities.GPU.filter({ user_email: user.email, clore_server_id: serverId });
+    // Deduplicate: match on server ID if known, otherwise match on user+model
+    const existing = serverId
+      ? await base44.entities.GPU.filter({ user_email: user.email, clore_server_id: serverId })
+      : await base44.entities.GPU.filter({ user_email: user.email, model: gpu_model });
 
     let gpu;
     if (existing && existing.length > 0) {

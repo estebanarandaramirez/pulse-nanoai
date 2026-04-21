@@ -100,13 +100,10 @@ export default function AppLayout({ children }) {
       {/* Footer */}
       <div className="p-3 border-t border-sidebar-border flex-shrink-0 space-y-2">
         <PhantomConnect />
-        <div className="flex items-center justify-between">
-          <div className="min-w-0">
-            <div className="text-[9px] text-muted-foreground truncate">{user?.email}</div>
-            <div className="text-[8px] tracking-[2px] uppercase text-cyan/60">SOLANA · MAINNET</div>
-          </div>
-          <button onClick={logout} className="text-muted-foreground hover:text-pulse-red transition-colors ml-2">
-            <LogOut className="w-4 h-4" />
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[9px] text-muted-foreground truncate min-w-0">{user?.email}</div>
+          <button onClick={logout} className="flex-shrink-0 text-muted-foreground hover:text-pulse-red transition-colors">
+            <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
