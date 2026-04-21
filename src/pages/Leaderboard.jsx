@@ -143,14 +143,13 @@ export default function Leaderboard() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-fixed">
               <thead>
                 <tr className="border-b border-border">
-                  {["Rank", "User", "GPUs", tab === "daily" ? "Today" : "Total Earned"].map(h => (
-                    <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">
-                      {h}
-                    </th>
-                  ))}
+                  <th className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal w-16">Rank</th>
+                  <th className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">User</th>
+                  <th className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal w-16">GPUs</th>
+                  <th className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal w-32">{tab === "daily" ? "Today" : "Total Earned"}</th>
                 </tr>
               </thead>
               <tbody>

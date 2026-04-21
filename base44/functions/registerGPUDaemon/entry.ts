@@ -1,9 +1,14 @@
 /**
  * registerGPUDaemon
- * Called by the local GPU daemon to register/update GPU info
- * Input: { gpu_model, vram_gb, location, platform_preference, daemon_id }
+ * Called by pulse-setup.ps1 after Clore.ai host installation.
+ * Creates or updates the GPU record and links it to the Clore.ai server ID
+ * so earnings can be attributed to the correct Pulse user.
+ *
+ * Input: { gpu_model, vram_gb, clore_server_id, platform, location }
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+const CLORE_BASE = 'https://api.clore.ai/v1';
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -11,78 +16,64 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { gpu_model, vram_gb, location, platform_preference, daemon_id, uptime_percent } = body;
+  const { gpu_model, vram_gb, clore_server_id, platform = 'Clore.ai', location } = body;
 
   if (!gpu_model || !vram_gb) {
-    return Response.json({ error: 'gpu_model and vram_gb required' }, { status: 400 });
+    return Response.json({ error: 'gpu_model and vram_gb are required' }, { status: 400 });
   }
 
+  const apiKey = Deno.env.get('CLOREAI_API_KEY');
+  const serverId = clore_server_id ? parseInt(clore_server_id, 10) : null;
+
+  // Fetch live rate for this server from Clore.ai
+  let ratePerHour = 0.3;
+  if (apiKey && serverId) {
+    try {
+      const res = await fetch(`${CLORE_BASE}/my_servers`, {
+        headers: { 'auth': apiKey },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const server = (data.servers ?? []).find((s: any) => s.id === serverId);
+        if (server?.price?.on_demand) {
+          ratePerHour = parseFloat(parseFloat(server.price.on_demand).toFixed(4));
+        }
+      }
+    } catch { /* use fallback */ }
+  }
+
+  const userRateHr = parseFloat((ratePerHour * 0.6).toFixed(4));
+  const gpu_id = `CLORE-${gpu_model.replace(/\s+/g, '')}-${(serverId ?? Math.random().toString(36).slice(2, 6)).toString().toUpperCase()}`;
+
   try {
-    // Check if GPU already exists for this user
-    const existing = await base44.entities.GPU.filter({
-      user_email: user.email,
-      gpu_id: daemon_id,
-    });
+    const existing = await base44.entities.GPU.filter({ user_email: user.email, clore_server_id: serverId });
 
     let gpu;
     if (existing && existing.length > 0) {
-      // Update existing
       gpu = await base44.entities.GPU.update(existing[0].id, {
         last_heartbeat: new Date().toISOString(),
-        uptime_percent: uptime_percent || existing[0].uptime_percent,
         status: 'active',
+        rate_per_hour: userRateHr,
+        active_platform: platform,
       });
     } else {
-      // Create new GPU record
       gpu = await base44.entities.GPU.create({
-        gpu_id: daemon_id,
+        gpu_id,
         model: gpu_model,
+        vram_gb: parseInt(vram_gb, 10),
         status: 'active',
-        rate_per_hour: 0.5,
-        uptime_percent: uptime_percent || 100,
-        vram_gb: vram_gb,
-        location: location || 'Unknown',
+        rate_per_hour: userRateHr,
+        uptime_percent: 100,
+        total_earned_usd: 0,
         pls_minted: 0,
+        location: location || 'Unknown',
         last_heartbeat: new Date().toISOString(),
         user_email: user.email,
+        clore_server_id: serverId,
+        active_platform: platform,
       });
     }
 
-    // Fetch live Salad rate for this GPU model (Salad is the active platform)
-    let saladRateHr = 0.3; // fallback
-    try {
-      const saladRes = await base44.asServiceRole.functions.invoke('fetchSaladEarnings', {});
-      const classes = saladRes.data?.gpu_classes || [];
-      // Find closest matching GPU class by name similarity
-      const match = classes.find((c: any) =>
-        c.name?.toLowerCase().includes(gpu_model.replace('NVIDIA ', '').toLowerCase()) ||
-        gpu_model.toLowerCase().includes(c.name?.toLowerCase().replace('nvidia ', ''))
-      );
-      if (match) saladRateHr = match.price_per_hour;
-    } catch {}
-
-    // Platform selector (Salad-only now, but kept for future multi-platform support)
-    let recommendedPlatform = platform_preference;
-    if (!platform_preference || platform_preference === 'auto') {
-      try {
-        const selectorRes = await base44.asServiceRole.functions.invoke('platformSelector', {
-          gpu_model: gpu_model,
-          rates: { "Salad": saladRateHr },
-          user_region: location || "US",
-          user_uptime_requirement: 80,
-        });
-        recommendedPlatform = selectorRes.data.recommended_platform;
-      } catch {
-        recommendedPlatform = 'Salad';
-      }
-    }
-
-    // Update the stored rate now that we have a live Salad rate
-    if (gpu && gpu.id && saladRateHr > 0) {
-      await base44.entities.GPU.update(gpu.id, { rate_per_hour: saladRateHr }).catch(() => {});
-    }
-
-    // --- Assign GPU to a node pool ---
     let nodeInfo: any = null;
     try {
       const nodeRes = await base44.functions.invoke('assignGPUToNode', { gpu_record_id: gpu.id });
@@ -93,15 +84,20 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      gpu_id: gpu.id,
-      gpu_model: gpu_model,
-      status: 'registered',
-      recommended_platform: recommendedPlatform,
-      salad_rate_hr: saladRateHr,
+      gpu_id: gpu.gpu_id,
+      gpu_model,
+      vram_gb,
+      clore_server_id: serverId,
+      active_platform: platform,
+      user_rate_hr: userRateHr,
+      gross_rate_hr: ratePerHour,
+      pulse_share_pct: 40,
+      daily_est_usd: parseFloat((userRateHr * 24 * 0.9).toFixed(2)),
+      monthly_est_usd: parseFloat((userRateHr * 24 * 0.9 * 30).toFixed(2)),
       node: nodeInfo,
-      message: `GPU registered${nodeInfo ? ` and assigned to ${nodeInfo.node_name}` : ''}. Earning on ${recommendedPlatform} at $${saladRateHr}/hr.`,
+      message: `GPU registered on Clore.ai via Pulse. Earning $${userRateHr}/hr (60% of $${ratePerHour}/hr gross).`,
     });
-  } catch (error) {
+  } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

@@ -1,9 +1,14 @@
 /**
  * fetchVastaiEarnings
- * Polls Vast.ai API to fetch user's GPU rental earnings
- * Returns: { total_earnings_usd, gpu_count, active_rentals }
+ * Fetches host-side machine earnings from Vast.ai using Pulse's master host account.
+ * Each user's machine is registered under Pulse's Vast.ai account via setup script.
+ *
+ * Required env vars:
+ *   VASTAI_API_KEY - Pulse's master Vast.ai host API key
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+const VAST_BASE = 'https://console.vast.ai/api/v0';
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -13,53 +18,64 @@ Deno.serve(async (req) => {
   const apiKey = Deno.env.get('VASTAI_API_KEY');
   if (!apiKey) return Response.json({ error: 'VASTAI_API_KEY not configured' }, { status: 500 });
 
+  const headers = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Accept': 'application/json',
+  };
+
   try {
-    // Vast.ai API: fetch user machines
-    const machinesRes = await fetch('https://api.vast.ai/api/v0/machines/', {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    });
+    // Fetch all machines registered under Pulse's host account
+    const machinesRes = await fetch(`${VAST_BASE}/machines/`, { headers });
+    if (!machinesRes.ok) {
+      const err = await machinesRes.text();
+      return Response.json({ error: `Failed to fetch machines: ${machinesRes.status}`, details: err }, { status: 500 });
+    }
     const machinesData = await machinesRes.json();
+    const machines: any[] = machinesData.machines || [];
 
-    if (!machinesData.machines) {
-      return Response.json({ error: 'Failed to fetch machines', details: machinesData });
+    // Fetch earnings for the host account
+    const earningsRes = await fetch(`${VAST_BASE}/users/me/machine_earnings/`, { headers });
+    if (!earningsRes.ok) {
+      const err = await earningsRes.text();
+      return Response.json({ error: `Failed to fetch earnings: ${earningsRes.status}`, details: err }, { status: 500 });
     }
+    const earningsData = await earningsRes.json();
 
-    // Fetch active rentals
-    const rentalsRes = await fetch('https://api.vast.ai/api/v0/rentals/active', {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    });
-    const rentalsData = await rentalsRes.json();
-
+    // Per-machine earnings summary
+    const machineEarnings: any[] = earningsData.summaries || [];
+    const earningsMap: Record<number, number> = {};
     let totalEarningsUsd = 0;
-    const activeRentals = rentalsData.rentals || [];
 
-    for (const rental of activeRentals) {
-      if (rental.status === 'running') {
-        // Accumulate earnings per minute of rental
-        const durationMinutes = Math.round((Date.now() - new Date(rental.start_date)) / 60000);
-        const earningsThisRental = (rental.price_per_minute || 0) * durationMinutes;
-        totalEarningsUsd += earningsThisRental;
-      }
+    for (const entry of machineEarnings) {
+      const earned = parseFloat(entry.credit || 0);
+      earningsMap[entry.machine_id] = earned;
+      totalEarningsUsd += earned;
     }
 
-    const activeGpuList = activeRentals
-      .filter(r => r.status === 'running')
-      .map(r => ({
-        machine_id: r.machine_id,
-        gpu_model: r.gpu_name || 'Unknown',
-        price_per_minute: r.price_per_minute,
-        duration_minutes: Math.round((Date.now() - new Date(r.start_date)) / 60000),
+    const activeMachines = machines
+      .filter(m => m.listed)
+      .map(m => ({
+        machine_id: m.id,
+        gpu_model: m.gpu_name || 'Unknown',
+        gpu_count: m.num_gpus || 1,
+        listed: m.listed,
+        rented: m.rented,
+        earnings_usd: parseFloat((earningsMap[m.id] || 0).toFixed(2)),
+        reliability: m.reliability2 ?? null,
+        inet_up_bw: m.inet_up_bw ?? null,
+        inet_down_bw: m.inet_down_bw ?? null,
       }));
 
     return Response.json({
       platform: 'Vast.ai',
       total_earnings_usd: parseFloat(totalEarningsUsd.toFixed(2)),
-      active_rentals: activeRentals.length,
-      gpu_list: activeGpuList,
+      total_machines: machines.length,
+      active_machines: activeMachines.filter(m => m.rented).length,
+      machine_list: activeMachines,
       last_fetched: new Date().toISOString(),
       user_email: user.email,
     });
-  } catch (error) {
+  } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

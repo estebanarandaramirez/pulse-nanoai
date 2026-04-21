@@ -1,8 +1,15 @@
 /**
  * fetchCloreaiEarnings
- * Fetches GPU rental earnings from Clore.ai
+ * Fetches host-side server list and balance from Clore.ai using Pulse's master account.
+ *
+ * Required env vars:
+ *   CLOREAI_API_KEY — Pulse's Clore.ai account API key
+ *
+ * Auth: Clore.ai uses `auth: <token>` header (not Authorization: Bearer)
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+const CLORE_BASE = 'https://api.clore.ai/v1';
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -10,46 +17,53 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = Deno.env.get('CLOREAI_API_KEY');
-  if (!apiKey) return Response.json({ error: 'CLOREAI_API_KEY not set' }, { status: 500 });
+  if (!apiKey) return Response.json({ error: 'CLOREAI_API_KEY not configured' }, { status: 500 });
+
+  const headers = { 'auth': apiKey };
 
   try {
-    // Fetch active machines for this user
-    const machinesRes = await fetch('https://api.clore.ai/v1/machines', {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    });
-    const machines = await machinesRes.json();
-
-    let totalEarningsUSD = 0;
-    const gpuDetails = [];
-
-    for (const machine of machines.data || []) {
-      if (machine.status !== 'active' || !machine.rental_active) continue;
-
-      const rentingPricePerMin = machine.renting_price_per_minute || 0;
-      const uptimeHours = machine.total_uptime_hours || 0;
-      const earningsUSD = (rentingPricePerMin * 60 * uptimeHours);
-
-      totalEarningsUSD += earningsUSD;
-      gpuDetails.push({
-        machine_id: machine.id,
-        gpu_name: machine.gpu_name,
-        status: machine.status,
-        earnings_usd: earningsUSD,
-        uptime_hours: uptimeHours,
-        rate_per_min: rentingPricePerMin,
-      });
+    // Fetch all servers registered under Pulse's Clore.ai account
+    const serversRes = await fetch(`${CLORE_BASE}/my_servers`, { headers });
+    if (!serversRes.ok) {
+      const err = await serversRes.text();
+      return Response.json({ error: `Clore.ai servers fetch failed: ${serversRes.status}`, details: err }, { status: 500 });
     }
+    const serversData = await serversRes.json();
+    const servers: any[] = serversData.servers ?? [];
+
+    // Fetch account balance (contains total earnings)
+    const balanceRes = await fetch(`${CLORE_BASE}/balance`, { headers });
+    let totalEarningsUsd = 0;
+    if (balanceRes.ok) {
+      const balanceData = await balanceRes.json();
+      // Clore.ai returns balance in CLORE tokens — convert to USD at market rate
+      // The `usd_value` field is provided when available
+      totalEarningsUsd = parseFloat((balanceData.usd_value ?? balanceData.balance ?? 0).toFixed(2));
+    }
+
+    const serverList = servers.map((s: any) => ({
+      server_id: s.id,
+      name: s.name ?? `Server #${s.id}`,
+      gpu_model: s.specs?.gpu?.join(', ') ?? 'Unknown',
+      gpu_count: s.specs?.gpus_count ?? 1,
+      status: s.status ?? 'unknown',
+      rented: s.rented ?? false,
+      price_per_hour: parseFloat((s.price?.on_demand ?? 0).toFixed(4)),
+      reliability: s.reliability ?? null,
+    }));
+
+    const rentedServers = serverList.filter(s => s.rented);
 
     return Response.json({
       platform: 'Clore.ai',
-      total_earnings_usd: parseFloat(totalEarningsUSD.toFixed(2)),
-      active_machines: gpuDetails.length,
-      machines: gpuDetails,
+      total_earnings_usd: totalEarningsUsd,
+      total_servers: servers.length,
+      rented_servers: rentedServers.length,
+      server_list: serverList,
+      last_fetched: new Date().toISOString(),
+      user_email: user.email,
     });
-  } catch (error) {
-    return Response.json(
-      { error: error.message },
-      { status: 500 }
-    );
+  } catch (error: any) {
+    return Response.json({ error: error.message }, { status: 500 });
   }
 });

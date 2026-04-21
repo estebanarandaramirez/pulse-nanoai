@@ -47,6 +47,12 @@
     },
     "daily_earned_usd": {
       "type": "number"
+    },
+    "clore_server_id": {
+      "type": "number"
+    },
+    "active_platform": {
+      "type": "string"
     }
   },
   "required": [

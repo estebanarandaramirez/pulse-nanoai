@@ -6,6 +6,8 @@ export default function PhantomConnect({ onWalletChange }) {
   const [wallet, setWallet] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const getProvider = () => window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : null);
+
   useEffect(() => {
     const stored = localStorage.getItem("pulse-wallet");
     if (stored) {
@@ -17,13 +19,13 @@ export default function PhantomConnect({ onWalletChange }) {
   const connect = async () => {
     setLoading(true);
     try {
-      if (window.solana?.isPhantom) {
-        const resp = await window.solana.connect();
+      const provider = getProvider();
+      if (provider) {
+        const resp = await provider.connect();
         const addr = resp.publicKey.toString();
         setWallet(addr);
         localStorage.setItem("pulse-wallet", addr);
         onWalletChange?.(addr);
-        // Persist wallet address to user profile
         await base44.auth.updateMe({ solana_wallet: addr }).catch(() => {});
       } else {
         window.open("https://phantom.app/", "_blank");
@@ -35,7 +37,8 @@ export default function PhantomConnect({ onWalletChange }) {
   };
 
   const disconnect = () => {
-    if (window.solana?.isPhantom) window.solana.disconnect();
+    const provider = getProvider();
+    if (provider) provider.disconnect();
     setWallet(null);
     localStorage.removeItem("pulse-wallet");
     onWalletChange?.(null);
@@ -44,20 +47,22 @@ export default function PhantomConnect({ onWalletChange }) {
 
   if (wallet) {
     return (
-      <div className="flex items-center gap-3 bg-card border border-neon-green/30 rounded-md px-4 py-3 glow-green">
-        <CheckCircle className="w-4 h-4 text-neon-green" />
-        <div>
-          <div className="text-[9px] text-muted-foreground tracking-[2px] uppercase">Phantom Connected</div>
-          <div className="text-[11px] font-mono text-neon-green text-glow-green">
-            {wallet.slice(0, 6)}...{wallet.slice(-6)}
+      <div className="bg-card border border-neon-green/30 rounded-md px-4 py-3 glow-green">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
+            <span className="text-[9px] tracking-[2px] uppercase text-muted-foreground">Phantom Connected</span>
           </div>
+          <button
+            onClick={disconnect}
+            className="text-[9px] tracking-[1px] uppercase text-muted-foreground hover:text-pulse-red transition-colors"
+          >
+            Disconnect
+          </button>
         </div>
-        <button
-          onClick={disconnect}
-          className="ml-auto text-[9px] tracking-[1px] uppercase text-muted-foreground hover:text-pulse-red transition-colors"
-        >
-          Disconnect
-        </button>
+        <div className="text-[12px] font-mono text-neon-green text-glow-green">
+          {wallet.slice(0, 6)}...{wallet.slice(-6)}
+        </div>
       </div>
     );
   }
