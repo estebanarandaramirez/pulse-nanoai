@@ -54,23 +54,39 @@ Deno.serve(async (req) => {
 
     const rentedServers = serverList.filter(s => s.rented);
 
-    // Fetch public marketplace to get real market rates (no auth required)
+    // Fetch public marketplace to get real market rates
     let marketRates: { name: string; price_per_hour: number }[] = [];
+    let marketDebug: any = null;
     try {
       const mktRes = await fetch(`${CLORE_BASE}/marketplace`, {
         headers: { 'auth': apiKey },
       });
-      if (mktRes.ok) {
-        const mktData = await mktRes.json();
-        const cards: any[] = mktData.cards ?? [];
-        // Aggregate: highest on-demand price seen per GPU model
+      const mktText = await mktRes.text();
+      let mktData: any = {};
+      try { mktData = JSON.parse(mktText); } catch { marketDebug = { parse_error: mktText.slice(0, 200) }; }
+
+      if (!marketDebug) {
+        // Clore.ai marketplace: try known response shapes
+        const listings: any[] = mktData.cards ?? mktData.servers ?? mktData.data ?? mktData.offers ?? [];
+        marketDebug = {
+          http_status: mktRes.status,
+          top_level_keys: Object.keys(mktData),
+          listing_count: listings.length,
+          sample: listings[0] ?? null,
+        };
+
         const rateMap: Record<string, number> = {};
-        for (const card of cards) {
-          const gpuModels: string[] = card.specs?.gpu ?? [];
-          const price = parseFloat(card.price?.on_demand ?? 0);
+        for (const item of listings) {
+          // Try multiple GPU field shapes
+          const gpuModels: string[] =
+            item.specs?.gpu ??
+            (item.gpu_model ? [item.gpu_model] : []) ??
+            [];
+          const price =
+            parseFloat(item.price?.on_demand ?? item.on_demand_price ?? item.price_per_hour ?? item.price ?? 0);
           if (!price || !gpuModels.length) continue;
           for (const model of gpuModels) {
-            if (!model || model === 'Unknown') continue;
+            if (!model || model.toLowerCase() === 'unknown') continue;
             if (!rateMap[model] || price > rateMap[model]) rateMap[model] = price;
           }
         }
@@ -78,7 +94,9 @@ Deno.serve(async (req) => {
           .map(([name, price_per_hour]) => ({ name, price_per_hour: parseFloat(price_per_hour.toFixed(4)) }))
           .sort((a, b) => b.price_per_hour - a.price_per_hour);
       }
-    } catch { /* market rates remain empty, frontend will use fallback */ }
+    } catch (e: any) {
+      marketDebug = { fetch_error: e.message };
+    }
 
     return Response.json({
       platform: 'Clore.ai',
@@ -87,6 +105,7 @@ Deno.serve(async (req) => {
       rented_servers: rentedServers.length,
       server_list: serverList,
       market_rates: marketRates,
+      market_debug: marketDebug,
       last_fetched: new Date().toISOString(),
       user_email: user.email,
     });
