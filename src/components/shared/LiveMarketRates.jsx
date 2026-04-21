@@ -22,20 +22,9 @@ export default function LiveMarketRates() {
     setError(null);
     try {
       const res = await base44.functions.invoke("fetchCloreaiEarnings", {});
-      const servers = res.data?.server_list;
-      if (servers && servers.length > 0) {
-        // Build a GPU class rate list from live server listings
-        const rateMap = {};
-        servers.forEach(s => {
-          if (!s.gpu_model || !s.price_per_hour) return;
-          if (!rateMap[s.gpu_model] || s.price_per_hour > rateMap[s.gpu_model]) {
-            rateMap[s.gpu_model] = s.price_per_hour;
-          }
-        });
-        const classes = Object.entries(rateMap)
-          .map(([name, price_per_hour]) => ({ name, price_per_hour }))
-          .sort((a, b) => b.price_per_hour - a.price_per_hour);
-        setGpuClasses(classes.length ? classes : CLORE_FALLBACK);
+      const marketRates = res.data?.market_rates;
+      if (marketRates && marketRates.length > 0) {
+        setGpuClasses(marketRates);
       } else {
         setGpuClasses(CLORE_FALLBACK);
       }

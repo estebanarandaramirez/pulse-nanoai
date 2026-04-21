@@ -54,12 +54,39 @@ Deno.serve(async (req) => {
 
     const rentedServers = serverList.filter(s => s.rented);
 
+    // Fetch public marketplace to get real market rates (no auth required)
+    let marketRates: { name: string; price_per_hour: number }[] = [];
+    try {
+      const mktRes = await fetch(`${CLORE_BASE}/marketplace`, {
+        headers: { 'auth': apiKey },
+      });
+      if (mktRes.ok) {
+        const mktData = await mktRes.json();
+        const cards: any[] = mktData.cards ?? [];
+        // Aggregate: highest on-demand price seen per GPU model
+        const rateMap: Record<string, number> = {};
+        for (const card of cards) {
+          const gpuModels: string[] = card.specs?.gpu ?? [];
+          const price = parseFloat(card.price?.on_demand ?? 0);
+          if (!price || !gpuModels.length) continue;
+          for (const model of gpuModels) {
+            if (!model || model === 'Unknown') continue;
+            if (!rateMap[model] || price > rateMap[model]) rateMap[model] = price;
+          }
+        }
+        marketRates = Object.entries(rateMap)
+          .map(([name, price_per_hour]) => ({ name, price_per_hour: parseFloat(price_per_hour.toFixed(4)) }))
+          .sort((a, b) => b.price_per_hour - a.price_per_hour);
+      }
+    } catch { /* market rates remain empty, frontend will use fallback */ }
+
     return Response.json({
       platform: 'Clore.ai',
       total_earnings_usd: totalEarningsUsd,
       total_servers: servers.length,
       rented_servers: rentedServers.length,
       server_list: serverList,
+      market_rates: marketRates,
       last_fetched: new Date().toISOString(),
       user_email: user.email,
     });
