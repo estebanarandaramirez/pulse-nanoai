@@ -51,6 +51,9 @@
     "clore_server_id": {
       "type": "number"
     },
+    "octa_node_token": {
+      "type": "string"
+    },
     "active_platform": {
       "type": "string"
     }
