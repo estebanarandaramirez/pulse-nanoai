@@ -62,9 +62,8 @@ function Show-Banner {
 }
 
 function Wait-ForKey {
-    Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray -NoNewline
-    try { \$null = \$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { Start-Sleep 3 }
     Write-Host ""
+    Read-Host "  Press Enter to close this window"
 }
 
 function Get-LocalIP {
@@ -265,7 +264,7 @@ trap {
     Write-Host "  Please share this with Pulse support at pulsenanoai.com" -ForegroundColor Yellow
     Write-Host ""
     Wait-ForKey
-    break
+    exit 1
 }
 
 New-Item -ItemType Directory -Force -Path $PULSE_DIR | Out-Null
@@ -275,6 +274,7 @@ switch ($phase) {
     "2"     { Invoke-Phase2 }
     default { Write-Host "Unknown phase: $phase" -ForegroundColor Red; Wait-ForKey; exit 1 }
 }
+exit 0
 `;
 
 // The .bat file extracts the embedded PS1 to %LOCALAPPDATA%\Pulse\ before
@@ -338,7 +338,7 @@ echo   Step 2: Launching installer...
 echo.
 echo   The setup window will open now. Follow the prompts inside it.
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_PATH%"
+powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File "%PS1_PATH%"
 goto :eof
 
 __PULSE_PS1__

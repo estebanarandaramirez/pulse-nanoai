@@ -76,9 +76,8 @@ function Get-LocalIP {
 }
 
 function Wait-ForKey {
-    Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray -NoNewline
-    try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { Start-Sleep 3 }
     Write-Host ""
+    Read-Host "  Press Enter to close this window"
 }
 
 # ── Phase 1: Enable WSL2 + schedule Phase 2 after reboot ─────────────────────
@@ -335,7 +334,7 @@ trap {
     Write-Host "  Please share this with Pulse support at pulsenanoai.com" -ForegroundColor Yellow
     Write-Host ""
     Wait-ForKey
-    break
+    exit 1
 }
 
 Require-Admin
@@ -345,6 +344,7 @@ $phase = if (Test-Path $PHASE_FILE) { Get-Content $PHASE_FILE } else { "1" }
 switch ($phase) {
     "1"     { Invoke-Phase1 }
     "2"     { Invoke-Phase2 }
-    default { Write-Host "Unknown phase: $phase" -ForegroundColor Red; pause; exit 1 }
+    default { Write-Host "Unknown phase: $phase" -ForegroundColor Red; Wait-ForKey; exit 1 }
 }
+exit 0
 
