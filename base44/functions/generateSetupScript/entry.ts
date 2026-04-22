@@ -323,7 +323,7 @@ set "PS1_PATH=%PULSE_DIR%\\pulse-setup.ps1"
 if not exist "%PULSE_DIR%" mkdir "%PULSE_DIR%"
 
 echo   Step 1: Extracting setup script...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=[IO.File]::ReadAllText('%~f0',[Text.Encoding]::UTF8); $m='__PULSE_PS1__'; $i=$c.IndexOf($m); if($i-lt 0){exit 1}; [IO.File]::WriteAllText('%PS1_PATH%',$c.Substring($i+$m.Length).TrimStart(),[Text.Encoding]::UTF8)"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=[IO.File]::ReadAllText('%~f0',[Text.Encoding]::UTF8); $m='__PULSE_PS1__'; $i=$c.LastIndexOf($m); if($i-lt 0){exit 1}; [IO.File]::WriteAllText('%PS1_PATH%',$c.Substring($i+$m.Length).TrimStart(),[Text.Encoding]::UTF8)"
 
 if not exist "%PS1_PATH%" (
     echo.
