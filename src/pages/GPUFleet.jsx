@@ -16,12 +16,13 @@ const MOCK_FLEET = [
 ];
 
 const MOCK_MARKET = [
-  { source: "Clore.ai", gpu: "RTX 4090", vram: 24, price_hr: 0.802, location: "US", status: "available" },
-  { source: "Clore.ai", gpu: "A100", vram: 80, price_hr: 1.750, location: "EU", status: "rented" },
-  { source: "Clore.ai", gpu: "RTX 4090", vram: 24, price_hr: 0.810, location: "US", status: "available" },
-  { source: "Clore.ai", gpu: "RTX 3090", vram: 24, price_hr: 0.298, location: "EU", status: "available" },
-  { source: "RunPod", gpu: "H100", vram: 80, price_hr: 2.890, location: "US", status: "rented" },
-  { source: "RunPod", gpu: "RTX 4090", vram: 24, price_hr: 0.890, location: "US", status: "available" },
+  { source: "Clore.ai",   gpu: "RTX 4090", vram: 24, price_hr: 0.802, location: "US", status: "available" },
+  { source: "Clore.ai",   gpu: "A100",     vram: 80, price_hr: 1.750, location: "EU", status: "rented" },
+  { source: "Clore.ai",   gpu: "RTX 4090", vram: 24, price_hr: 0.810, location: "US", status: "available" },
+  { source: "Clore.ai",   gpu: "RTX 3090", vram: 24, price_hr: 0.298, location: "EU", status: "available" },
+  { source: "OctaSpace",  gpu: "RTX 4090", vram: 24, price_hr: 0.450, location: "US", status: "available" },
+  { source: "OctaSpace",  gpu: "RTX 3090", vram: 24, price_hr: 0.450, location: "EU", status: "available" },
+  { source: "OctaSpace",  gpu: "H100",     vram: 80, price_hr: 1.500, location: "US", status: "rented" },
 ];
 
 const STATUS_FILTER = ["all", "active", "idle", "offline", "maintenance"];

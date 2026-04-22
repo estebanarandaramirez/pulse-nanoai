@@ -14,7 +14,8 @@ const MONTHLY = [
 ];
 
 const PLATFORM_SPLIT = [
-  { platform: "Clore.ai", revenue: 46800, pct: 100 },
+  { platform: "Clore.ai",   revenue: 46800, pct: 100, color: "bg-cyan" },
+  { platform: "OctaSpace",  revenue: 0,     pct: 0,   color: "bg-purple-400" },
 ];
 
 const CTooltip = ({ active, payload, label }) => {
@@ -89,14 +90,14 @@ export default function Analytics() {
             <div key={p.platform} className="flex items-center gap-3">
               <span className="text-[10px] font-mono text-muted-foreground w-20 flex-shrink-0">{p.platform}</span>
               <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                <div className="h-full rounded-full bg-cyan" style={{ width: `${p.pct}%` }} />
+                <div className={`h-full rounded-full ${p.color}`} style={{ width: `${p.pct}%` }} />
               </div>
               <span className="text-[10px] font-mono text-cyan w-16 text-right">${p.revenue.toLocaleString()}</span>
               <span className="text-[9px] font-mono text-muted-foreground w-8 text-right">{p.pct}%</span>
             </div>
           ))}
           <p className="text-[8px] font-mono text-muted-foreground pt-1">
-            Other providers (RunPod, OctaSpace) are currently gated.
+            OctaSpace earnings will appear here once nodes are active and earning.
           </p>
         </div>
       </div>
