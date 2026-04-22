@@ -60,7 +60,7 @@ function Show-Banner {
     Write-Host ""
 }
 
-function Require-Admin {
+function Assert-Admin {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)) {
         Write-Host "  Relaunching as Administrator..." -ForegroundColor Yellow
@@ -211,25 +211,86 @@ function Invoke-Phase2 {
         Write-Log "Ubuntu already present" "OK"
     }
 
-    # Run Clore.ai host installation inside WSL2
-    # This is a single installer command — much simpler than Vast.ai
+    # ── Detect GPU vendor (needed for driver pre-install and registration) ───────
+    $gpuObj    = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } | Select-Object -First 1
+    $gpuName   = $gpuObj.Name
+    $vramMb    = $gpuObj.AdapterRAM
+    $vramGb    = if ($vramMb -and $vramMb -gt 0) { [math]::Round($vramMb / 1GB) } else { 8 }
+    $gpuVendor = if ($gpuName -match "NVIDIA|GeForce|RTX|GTX") { "NVIDIA" } else { "AMD" }
+
+    # ── Pre-install GPU compute drivers inside WSL2 ───────────────────────────
+    # Clore.ai's install.sh checks for GPU drivers and exits if absent.
+    # NVIDIA: WSL2 auto-exposes the Windows driver; just verify it's visible.
+    # AMD: ROCm userspace must be installed explicitly (no kernel module needed).
+    Write-Log "Checking GPU compute environment in WSL2 ($gpuVendor)..."
+    if ($gpuVendor -eq "NVIDIA") {
+        $nvCheck = wsl -d Ubuntu --user root -- bash -c "nvidia-smi -L 2>/dev/null | head -1" 2>&1
+        if ($nvCheck -match "GPU 0") {
+            Write-Log "NVIDIA GPU visible in WSL2" "OK"
+        } else {
+            Write-Log "NVIDIA GPU not yet visible in WSL2 — ensure Windows NVIDIA driver is up to date" "WARN"
+        }
+    } else {
+        Write-Log "Installing ROCm for AMD GPU in WSL2 (this takes a few minutes)..."
+        $ubuntuVer = wsl -d Ubuntu --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
+        $ubuntuVer = $ubuntuVer.Trim()
+        if ($ubuntuVer -notin @("jammy","focal","noble")) { $ubuntuVer = "jammy" }
+        $rocmScript = @"
+set -e
+apt-get update -qq 2>&1 | tail -2
+apt-get install -y -qq wget gnupg ca-certificates 2>&1 | tail -2
+mkdir -p /etc/apt/keyrings
+wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 $ubuntuVer main' > /etc/apt/sources.list.d/rocm.list
+apt-get update -qq 2>&1 | tail -2
+apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
+"@
+        wsl -d Ubuntu --user root -- bash -c $rocmScript 2>&1 | ForEach-Object { Write-Log $_ }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "ROCm installed" "OK"
+        } else {
+            Write-Log "ROCm install encountered errors — Clore.ai may have limited AMD support" "WARN"
+        }
+    }
+
+    # ── Install Clore.ai host client inside WSL2 ─────────────────────────────
     Write-Log "Installing Clore.ai host client inside WSL2..."
     $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) $CLOREAI_INIT_TOKEN"
-    wsl -d Ubuntu -- bash -c $cloreInstall 2>&1 | ForEach-Object { Write-Log $_ }
+    $cloreOutput = wsl -d Ubuntu --user root -- bash -c $cloreInstall 2>&1
+    $cloreExit = $LASTEXITCODE
+    $cloreOutput | ForEach-Object { Write-Log $_ }
+    if ($cloreExit -ne 0) {
+        Write-Log "Clore.ai installation failed (exit $cloreExit). Check the output above." "ERROR"
+        Wait-ForKey; exit 1
+    }
     Write-Log "Clore.ai install complete" "OK"
 
-    # Extract the server ID that Clore.ai assigned to this machine
-    Write-Log "Fetching Clore.ai server ID..."
-    $serverIdRaw = wsl -d Ubuntu -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null || echo ''" 2>&1
-    $serverId = $serverIdRaw.Trim()
+    # ── Poll for server ID (Clore.ai can take ~2 min to assign) ──────────────
+    Write-Log "Waiting for Clore.ai to assign server ID..."
+    $serverId = ""
+    for ($i = 1; $i -le 12; $i++) {
+        $raw = wsl -d Ubuntu --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null" 2>&1
+        $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
+        if ($candidate) { $serverId = $candidate.Trim(); break }
+        Write-Log "  Still waiting... ($($i * 10)s elapsed)"
+        Start-Sleep 10
+    }
     if ($serverId) {
         Write-Log "Clore.ai Server ID: $serverId" "OK"
     } else {
-        Write-Log "Server ID not yet assigned — Clore.ai may take a few minutes" "WARN"
+        Write-Log "Server ID not yet assigned — check the Pulse dashboard in a few minutes" "WARN"
         $serverId = ""
     }
 
-    # ── Networking: UPnP auto port-forward ───────────────────────────────────
+    # ── Networking: Windows Firewall + UPnP ──────────────────────────────────
+    # Always add Windows Firewall inbound rules so traffic is allowed at the OS level.
+    Write-Log "Adding Windows Firewall inbound rules..."
+    foreach ($port in $CLORE_PORTS) {
+        New-NetFirewallRule -DisplayName "Pulse-Clore-TCP-$port" -Direction Inbound `
+            -Protocol TCP -LocalPort $port -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    }
+    Write-Log "Firewall rules added for ports $($CLORE_PORTS -join ', ')" "OK"
+
     Write-Log "Attempting UPnP automatic port forwarding..."
     $localIP = Get-LocalIP
     $upnpOk  = $false
@@ -247,25 +308,27 @@ function Invoke-Phase2 {
 
     if (-not $upnpOk) {
         Write-Host ""
-        Write-Host "  ┌──────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-        Write-Host "  │  ACTION NEEDED: Router doesn't support UPnP.             │" -ForegroundColor Yellow
-        Write-Host "  │  Forward these TCP ports to ${localIP}:                  │" -ForegroundColor Yellow
+        Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
+        Write-Host "  │  ROUTER SETUP REQUIRED (one-time, ~2 minutes)                │" -ForegroundColor Yellow
+        Write-Host "  │                                                              │" -ForegroundColor Yellow
+        Write-Host "  │  Your router doesn't support auto-forwarding (UPnP off).    │" -ForegroundColor Yellow
+        Write-Host "  │  Without this, Clore.ai renters can't connect to your GPU.  │" -ForegroundColor Yellow
+        Write-Host "  │                                                              │" -ForegroundColor Yellow
+        Write-Host "  │  1. Open your router admin page (usually http://192.168.1.1)│" -ForegroundColor Yellow
+        Write-Host "  │  2. Find 'Port Forwarding' or 'Virtual Server'              │" -ForegroundColor Yellow
+        Write-Host "  │  3. Add these TCP rules → $localIP :                        │" -ForegroundColor Yellow
         foreach ($p in $CLORE_PORTS) {
-        Write-Host "  │    TCP $p                                                 │" -ForegroundColor Yellow
+        Write-Host "  │       TCP $p → $localIP`:$p                                 │" -ForegroundColor Yellow
         }
-        Write-Host "  │  Check your router admin page (usually 192.168.1.1)      │" -ForegroundColor Yellow
-        Write-Host "  └──────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
-        Write-Host ""
-        Start-Sleep 3
+        Write-Host "  │                                                              │" -ForegroundColor Yellow
+        Write-Host "  │  Press Enter once done (you can also finish this later via  │" -ForegroundColor Yellow
+        Write-Host "  │  the Pulse dashboard — but jobs won't land until it's done) │" -ForegroundColor Yellow
+        Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+        Read-Host "  Press Enter to continue"
     }
 
     # ── Register with Pulse ───────────────────────────────────────────────────
     Write-Log "Registering machine with Pulse..."
-    $gpuObj    = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } | Select-Object -First 1
-    $gpuName   = $gpuObj.Name
-    $vramMb    = $gpuObj.AdapterRAM
-    $vramGb    = if ($vramMb -and $vramMb -gt 0) { [math]::Round($vramMb / 1GB) } else { 8 }
-    $gpuVendor = if ($gpuName -match "NVIDIA|GeForce|RTX|GTX") { "NVIDIA" } else { "AMD" }
 
     $body = @{
         gpu_model       = $gpuName
@@ -380,7 +443,7 @@ trap {
     exit 1
 }
 
-Require-Admin
+Assert-Admin
 New-Item -ItemType Directory -Force -Path $PULSE_DIR | Out-Null
 
 $phase = if (Test-Path $PHASE_FILE) { Get-Content $PHASE_FILE } else { "1" }
