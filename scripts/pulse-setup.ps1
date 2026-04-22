@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     PULSE GPU Provider Setup — Windows Installer
@@ -123,8 +123,15 @@ function Invoke-Phase1 {
     # Mark phase 2 and register resume task
     Set-Content -Path $PHASE_FILE -Value "2" -Encoding UTF8
 
+    # Copy self to a stable location so Phase 2 works even if the user moves
+    # or deletes the original file after the reboot
+    $stablePath = "$PULSE_DIR\pulse-setup.ps1"
+    if ($PSCommandPath -ne $stablePath) {
+        Copy-Item -Path $PSCommandPath -Destination $stablePath -Force
+    }
+
     $action    = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$PSCommandPath`""
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$stablePath`""
     $trigger   = New-ScheduledTaskTrigger -AtLogOn
     $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
@@ -162,7 +169,7 @@ function Invoke-Phase2 {
     # This is a single installer command — much simpler than Vast.ai
     Write-Log "Installing Clore.ai host client inside WSL2..."
     $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) $CLOREAI_INIT_TOKEN"
-    wsl -d Ubuntu -- bash -c $cloreInstall 2>&1 | Write-Log -level "INFO"
+    wsl -d Ubuntu -- bash -c $cloreInstall 2>&1 | ForEach-Object { Write-Log $_ }
     Write-Log "Clore.ai install complete" "OK"
 
     # Extract the server ID that Clore.ai assigned to this machine
@@ -313,6 +320,18 @@ wsl -d Ubuntu -- bash -c "sudo systemctl start clore-hosting 2>/dev/null" 2>&1 |
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
+trap {
+    Write-Host ""
+    Write-Host "  [ERROR] An unexpected error stopped the installer:" -ForegroundColor Red
+    Write-Host "  $_" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Log saved to: $LOG_FILE" -ForegroundColor Yellow
+    Write-Host "  Please share this with Pulse support at pulsenanoai.com" -ForegroundColor Yellow
+    Write-Host ""
+    pause
+    break
+}
+
 Require-Admin
 New-Item -ItemType Directory -Force -Path $PULSE_DIR | Out-Null
 
@@ -322,3 +341,4 @@ switch ($phase) {
     "2"     { Invoke-Phase2 }
     default { Write-Host "Unknown phase: $phase" -ForegroundColor Red; pause; exit 1 }
 }
+

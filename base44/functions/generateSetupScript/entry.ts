@@ -250,6 +250,18 @@ wsl -d Ubuntu -- bash -c "sudo systemctl start clore-hosting 2>/dev/null" 2>&1 |
 }
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
+trap {
+    Write-Host ""
+    Write-Host "  [ERROR] An unexpected error stopped the installer:" -ForegroundColor Red
+    Write-Host "  $_" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Log saved to: $LOG_FILE" -ForegroundColor Yellow
+    Write-Host "  Please share this with Pulse support at pulsenanoai.com" -ForegroundColor Yellow
+    Write-Host ""
+    pause
+    break
+}
+
 New-Item -ItemType Directory -Force -Path $PULSE_DIR | Out-Null
 $phase = if (Test-Path $PHASE_FILE) { Get-Content $PHASE_FILE } else { "1" }
 switch ($phase) {
@@ -264,43 +276,63 @@ switch ($phase) {
 const BAT_TEMPLATE = `@echo off
 setlocal
 
-:: ── PULSE GPU Setup ──────────────────────────────────────────────────────────
-:: Just double-click this file to get started.
-:: It will request Administrator access automatically.
-
-set PULSE_DIR=%LOCALAPPDATA%\\Pulse
-if not exist "%PULSE_DIR%" mkdir "%PULSE_DIR%" 2>nul
-
-:: Extract the embedded PS1 to a permanent location before elevation
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$src='%~f0'; $txt=[IO.File]::ReadAllText($src); $m='__PULSE_PS1__'; $i=$txt.IndexOf($m); if($i-ge 0){[IO.File]::WriteAllText('%PULSE_DIR%\\pulse-setup.ps1',$txt.Substring($i+$m.Length).TrimStart(),[Text.Encoding]::UTF8)}" 2>nul
-
-:: Check if already running as Administrator
+:: PULSE GPU Setup
 net session >nul 2>&1
-if %errorlevel% equ 0 goto :run
+if %errorlevel% equ 0 goto :elevated
 
-:: Not admin — show message then request elevation
+cls
 echo.
-echo   =========================================
+echo   ==========================================
 echo    PULSE GPU Setup
-echo   =========================================
+echo   ==========================================
 echo.
-echo   Administrator access is required.
+echo   This installer needs Administrator access to set up
+echo   your GPU for earning via Clore.ai and Pulse.
 echo.
-echo   A UAC dialog will appear  —  click YES.
-echo   (Check your taskbar if you don't see it.)
+echo   WHAT TO DO:
 echo.
-timeout /t 3 /nobreak >nul
+echo     Step 1 ^| If you see "Windows protected your PC"
+echo              click "More info" then "Run anyway"
+echo.
+echo     Step 2 ^| A UAC popup will appear -- click YES
+echo.
 
-powershell -Command "Start-Process powershell -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File ""%PULSE_DIR%\\pulse-setup.ps1""' -Verb RunAs"
+:: VBScript elevation — Chr(34) avoids broken VBScript from embedded quotes
+set "VBS=%temp%\\pulse_uac.vbs"
+echo Set sh = CreateObject("Shell.Application") > "%VBS%"
+echo sh.ShellExecute "cmd.exe", "/c " ^& Chr(34) ^& "%~f0" ^& Chr(34), "", "runas", 1 >> "%VBS%"
+cscript //nologo "%VBS%"
+del "%VBS%" >nul 2>&1
 exit /b
 
-:run
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PULSE_DIR%\\pulse-setup.ps1"
-if %errorlevel% neq 0 (
+:elevated
+cls
+echo.
+echo   PULSE GPU Setup ^| Running as Administrator
+echo.
+
+set "PULSE_DIR=%LOCALAPPDATA%\\Pulse"
+set "PS1_PATH=%PULSE_DIR%\\pulse-setup.ps1"
+
+if not exist "%PULSE_DIR%" mkdir "%PULSE_DIR%"
+
+echo   Step 1: Extracting setup script...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=[IO.File]::ReadAllText('%~f0',[Text.Encoding]::UTF8); $m='__PULSE_PS1__'; $i=$c.IndexOf($m); if($i-lt 0){exit 1}; [IO.File]::WriteAllText('%PS1_PATH%',$c.Substring($i+$m.Length).TrimStart(),[Text.Encoding]::UTF8)"
+
+if not exist "%PS1_PATH%" (
     echo.
-    echo   Setup encountered an error. Check %PULSE_DIR%\\setup.log for details.
+    echo   ERROR: Could not extract setup script.
+    echo   Please re-download from pulsenanoai.com
+    echo.
     pause
+    exit /b 1
 )
+
+echo   Step 2: Launching installer...
+echo.
+echo   The setup window will open now. Follow the prompts inside it.
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_PATH%"
 goto :eof
 
 __PULSE_PS1__
