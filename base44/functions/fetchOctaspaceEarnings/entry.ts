@@ -19,7 +19,13 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = Deno.env.get('OCTASPACE_API_KEY');
-  if (!apiKey) return Response.json({ error: 'OCTASPACE_API_KEY not configured' }, { status: 500 });
+  if (!apiKey) return Response.json({
+    platform: 'OctaSpace',
+    total_earnings_usd: 0,
+    active_nodes: 0,
+    nodes: [],
+    note: 'OCTASPACE_API_KEY not configured — add it in Base44 env vars once you have an OctaSpace master account.',
+  });
 
   try {
     // Fetch all nodes registered under the Pulse master account

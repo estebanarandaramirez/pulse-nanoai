@@ -4,7 +4,7 @@ import { base44 } from "@/api/base44Client";
 import GPUDetector from "../components/shared/GPUDetector";
 import SectionTitle from "../components/shared/SectionTitle";
 
-const STEPS = ["GPU Detected", "Assigned to Node", "Now Earning"];
+const STEPS = ["GPU Registered", "Assigned to Node", "Now Earning"];
 
 const PLATFORMS = [
   {
@@ -25,7 +25,7 @@ const PLATFORMS = [
     id: "octaspace",
     name: "OctaSpace",
     color: "purple",
-    borderClass: "border-purple/40",
+    borderClass: "border-purple-400/40",
     activeBorderClass: "border-purple-400",
     activeBgClass: "bg-purple-500/10",
     textClass: "text-purple-400",
@@ -240,10 +240,11 @@ export default function ConnectGPU() {
 
       {/* GPU Detector */}
       <div>
-        <SectionTitle>Step 3 — Detect Your GPU</SectionTitle>
-        <div className="mt-3">
-          <GPUDetector onDetected={onDetected} />
-        </div>
+        <SectionTitle>Step 3 — Register Your GPU with Pulse</SectionTitle>
+        <p className="text-[9px] font-mono text-muted-foreground mt-1 mb-3">
+          The installer sets up the {platform?.name} service on your machine. This step registers your GPU with Pulse so earnings are tracked and PULSE tokens can be distributed to your wallet.
+        </p>
+        <GPUDetector onDetected={onDetected} />
       </div>
 
       {loading && (

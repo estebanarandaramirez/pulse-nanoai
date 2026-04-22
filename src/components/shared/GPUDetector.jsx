@@ -98,9 +98,9 @@ export default function GPUDetector({ onDetected }) {
         <Search className="w-5 h-5 text-cyan" />
       )}
       <div className="text-left">
-        <div className="text-[9px] tracking-[2px] uppercase text-muted-foreground">Auto-Detection</div>
+        <div className="text-[9px] tracking-[2px] uppercase text-muted-foreground">Auto-Detect &amp; Register</div>
         <div className="text-[11px] font-mono text-cyan group-hover:text-glow-cyan">
-          {detecting ? "Scanning hardware..." : "Detect GPU"}
+          {detecting ? "Scanning hardware..." : "Register GPU with Pulse"}
         </div>
       </div>
     </button>
