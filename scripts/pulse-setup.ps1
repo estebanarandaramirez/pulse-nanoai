@@ -105,6 +105,28 @@ function Invoke-Phase1 {
 
     New-Item -ItemType Directory -Force -Path $PULSE_DIR | Out-Null
 
+    # Virtualization check — WSL2 requires AMD-V/SVM or Intel VT-x enabled in BIOS
+    $virtEnabled = (Get-ComputerInfo).HyperVRequirementVirtualizationFirmwareEnabled
+    if ($virtEnabled -eq $false) {
+        Write-Log "Hardware virtualization is disabled in your BIOS/UEFI." "ERROR"
+        Write-Host ""
+        Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Red
+        Write-Host "  │  ACTION REQUIRED: Enable virtualization in your BIOS/UEFI    │" -ForegroundColor Red
+        Write-Host "  │                                                              │" -ForegroundColor Red
+        Write-Host "  │  1. Restart your PC                                          │" -ForegroundColor Red
+        Write-Host "  │  2. Press Delete or F2 during boot to open BIOS             │" -ForegroundColor Red
+        Write-Host "  │  3. Find: Advanced > CPU Configuration > SVM Mode           │" -ForegroundColor Red
+        Write-Host "  │     (Intel boards: look for 'Intel Virtualization' or VT-x) │" -ForegroundColor Red
+        Write-Host "  │  4. Set it to Enabled                                        │" -ForegroundColor Red
+        Write-Host "  │  5. Press F10 to save and exit                              │" -ForegroundColor Red
+        Write-Host "  │                                                              │" -ForegroundColor Red
+        Write-Host "  │  Then re-run this installer.                                 │" -ForegroundColor Red
+        Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Red
+        Write-Host ""
+        Wait-ForKey; exit 1
+    }
+    Write-Log "Hardware virtualization enabled in BIOS — OK" "OK"
+
     # Enable WSL2 features
     Write-Log "Enabling WSL2 Windows features..."
     dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
@@ -164,8 +186,27 @@ function Invoke-Phase2 {
     Write-Log "Setting up Ubuntu on WSL2..."
     $distros = wsl --list --quiet 2>&1
     if ($distros -notmatch "Ubuntu") {
+        Write-Log "Downloading Ubuntu..."
         wsl --install -d Ubuntu --no-launch 2>&1 | Out-Null
-        Write-Log "Ubuntu installed" "OK"
+
+        # --no-launch downloads but doesn't initialize. Force a headless first-boot
+        # so the distro registers as usable (creates root fs, default user = root).
+        Write-Log "Initializing Ubuntu (first boot)..."
+        wsl -d Ubuntu --user root -- bash -c "echo initialized" 2>&1 | Out-Null
+
+        # If the distro still isn't ready, fall back to wsl --install without --no-launch
+        $check = wsl -d Ubuntu -- echo "ok" 2>&1
+        if ($check -notmatch "ok") {
+            Write-Log "Headless init failed — launching Ubuntu for first-time setup..." "WARN"
+            Write-Host ""
+            Write-Host "  Ubuntu needs a one-time setup. A new window will open." -ForegroundColor Yellow
+            Write-Host "  Create a Linux username + password, then close that window." -ForegroundColor Yellow
+            Write-Host "  This installer will continue automatically." -ForegroundColor Yellow
+            Write-Host ""
+            Start-Process wsl.exe -ArgumentList "-d Ubuntu" -Wait
+        }
+
+        Write-Log "Ubuntu installed and initialized" "OK"
     } else {
         Write-Log "Ubuntu already present" "OK"
     }
