@@ -44,6 +44,6 @@ module.exports = {
   		}
   	}
   },
-  safelist: ['text-cyan', 'text-neon-green', 'text-amber', 'text-purple', 'text-pulse-red', 'border-cyan', 'border-neon-green', 'border-amber', 'border-purple', 'bg-cyan/10', 'bg-neon-green/10', 'bg-amber/10', 'bg-purple/10'],
+  safelist: ['text-cyan', 'text-neon-green', 'text-amber', 'text-purple', 'text-pulse-red', 'border-cyan', 'border-neon-green', 'border-amber', 'border-purple', 'border-purple/40', 'border-cyan/40', 'bg-cyan/10', 'bg-neon-green/10', 'bg-amber/10', 'bg-purple/10'],
   plugins: [require("tailwindcss-animate")],
 }

@@ -23,7 +23,7 @@ const OCTA_RATES = [
 
 const PLATFORMS = [
   { id: "clore",      label: "Clore.ai",   color: "text-cyan",        dot: "bg-cyan",        border: "border-cyan/30" },
-  { id: "octaspace",  label: "OctaSpace",  color: "text-purple-400",  dot: "bg-purple-400",  border: "border-purple-400/30" },
+  { id: "octaspace",  label: "OctaSpace",  color: "text-purple",  dot: "bg-purple",  border: "border-purple/30" },
 ];
 
 export default function LiveMarketRates() {

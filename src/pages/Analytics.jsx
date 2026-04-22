@@ -15,7 +15,7 @@ const MONTHLY = [
 
 const PLATFORM_SPLIT = [
   { platform: "Clore.ai",   revenue: 46800, pct: 100, color: "bg-cyan" },
-  { platform: "OctaSpace",  revenue: 0,     pct: 0,   color: "bg-purple-400" },
+  { platform: "OctaSpace",  revenue: 0,     pct: 0,   color: "bg-purple" },
 ];
 
 const CTooltip = ({ active, payload, label }) => {
