@@ -83,10 +83,10 @@ function Invoke-Phase1 {
     Write-Log "Windows build $build — OK" "OK"
 
     $gpu = (Get-WmiObject Win32_VideoController |
-        Where-Object { $_.Name -match "NVIDIA" } |
+        Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } |
         Select-Object -First 1).Name
     if (-not $gpu) {
-        Write-Log "No NVIDIA GPU detected. Pulse requires an NVIDIA GPU." "ERROR"
+        Write-Log "No supported GPU detected. Pulse requires an NVIDIA or AMD GPU." "ERROR"
         Wait-ForKey; exit 1
     }
     Write-Log "GPU: $gpu" "OK"
@@ -179,9 +179,11 @@ function Invoke-Phase2 {
     }
 
     Write-Log "Registering machine with Pulse..."
-    $gpuName = (Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match "NVIDIA" } | Select-Object -First 1).Name
-    $vramMb  = (Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match "NVIDIA" } | Select-Object -First 1).AdapterRAM
-    $vramGb  = if ($vramMb) { [math]::Round($vramMb / 1GB) } else { 8 }
+    $gpuObj    = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } | Select-Object -First 1
+    $gpuName   = $gpuObj.Name
+    $vramMb    = $gpuObj.AdapterRAM
+    $vramGb    = if ($vramMb -and $vramMb -gt 0) { [math]::Round($vramMb / 1GB) } else { 8 }
+    $gpuVendor = if ($gpuName -match "NVIDIA|GeForce|RTX|GTX") { "NVIDIA" } else { "AMD" }
 
     $body = @{ gpu_model = $gpuName; vram_gb = $vramGb; clore_server_id = $serverId; platform = "Clore.ai" } | ConvertTo-Json
     try {
@@ -194,9 +196,15 @@ function Invoke-Phase2 {
     Write-Log "Installing GPU gaming watchdog..."
     $watchdog = @'
 $hi = 75; $lo = 20; $paused = $false
+$vendor = if (Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA|GeForce|RTX|GTX' } | Select-Object -First 1) { 'NVIDIA' } else { 'AMD' }
 while ($true) {
     try {
-        $util = [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits).Trim()
+        $util = if ($vendor -eq 'NVIDIA') {
+            [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null).Trim()
+        } else {
+            $s = Get-Counter '\\GPU Engine(*engtype_3D)\\Utilization Percentage' -ErrorAction SilentlyContinue
+            if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
+        }
         if ($util -gt $hi -and -not $paused) {
             wsl -d Ubuntu -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
             $paused = $true
@@ -297,8 +305,8 @@ echo   your GPU for earning via Clore.ai and Pulse.
 echo.
 echo   WHAT TO DO:
 echo.
-echo     Step 1 ^| If you see "Windows protected your PC"
-echo              click "More info" then "Run anyway"
+echo     Step 1 ^| If you see "Open File - Security Warning", click RUN
+echo              If you see "Windows protected your PC", click More info then Run anyway
 echo.
 echo     Step 2 ^| A UAC popup will appear -- click YES
 echo.

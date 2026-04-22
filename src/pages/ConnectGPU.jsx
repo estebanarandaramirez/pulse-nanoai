@@ -109,8 +109,9 @@ export default function ConnectGPU() {
             <div className="text-[10px] font-mono tracking-[2px] uppercase text-cyan mb-1">Step 1 — Download &amp; Run Setup</div>
             <p className="text-[9px] font-mono text-muted-foreground leading-relaxed">
               Download and <span className="text-foreground">double-click</span> <span className="text-cyan">pulse-setup.bat</span>.<br />
-              A UAC dialog will appear — click <span className="text-neon-green font-semibold">Yes</span> to allow it to run.<br />
-              <span className="text-muted-foreground/70">No PowerShell setup needed — just double-click and approve.</span>
+              If you see <span className="text-foreground">"Open File — Security Warning"</span>, click <span className="text-neon-green font-semibold">Run</span>.<br />
+              A UAC dialog will appear — click <span className="text-neon-green font-semibold">Yes</span>.<br />
+              <span className="text-muted-foreground/70">The warning is normal for downloaded scripts — the file is safe.</span>
             </p>
           </div>
           <button

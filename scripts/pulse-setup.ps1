@@ -93,12 +93,12 @@ function Invoke-Phase1 {
     }
     Write-Log "Windows build $build — OK" "OK"
 
-    # NVIDIA GPU check
+    # GPU check (NVIDIA or AMD)
     $gpu = (Get-WmiObject Win32_VideoController |
-        Where-Object { $_.Name -match "NVIDIA" } |
+        Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } |
         Select-Object -First 1).Name
     if (-not $gpu) {
-        Write-Log "No NVIDIA GPU detected. Pulse requires an NVIDIA GPU." "ERROR"
+        Write-Log "No supported GPU detected. Pulse requires an NVIDIA or AMD GPU." "ERROR"
         Wait-ForKey; exit 1
     }
     Write-Log "GPU: $gpu" "OK"
@@ -220,13 +220,11 @@ function Invoke-Phase2 {
 
     # ── Register with Pulse ───────────────────────────────────────────────────
     Write-Log "Registering machine with Pulse..."
-    $gpuName = (Get-WmiObject Win32_VideoController |
-        Where-Object { $_.Name -match "NVIDIA" } |
-        Select-Object -First 1).Name
-    $vramMb  = (Get-WmiObject Win32_VideoController |
-        Where-Object { $_.Name -match "NVIDIA" } |
-        Select-Object -First 1).AdapterRAM
-    $vramGb  = if ($vramMb) { [math]::Round($vramMb / 1GB) } else { 8 }
+    $gpuObj    = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } | Select-Object -First 1
+    $gpuName   = $gpuObj.Name
+    $vramMb    = $gpuObj.AdapterRAM
+    $vramGb    = if ($vramMb -and $vramMb -gt 0) { [math]::Round($vramMb / 1GB) } else { 8 }
+    $gpuVendor = if ($gpuName -match "NVIDIA|GeForce|RTX|GTX") { "NVIDIA" } else { "AMD" }
 
     $body = @{
         gpu_model       = $gpuName
@@ -248,19 +246,23 @@ function Invoke-Phase2 {
 
     # ── GPU Watchdog: pause Clore.ai during gaming ────────────────────────────
     Write-Log "Installing GPU gaming watchdog..."
+    Write-Log "GPU vendor: $gpuVendor" "OK"
     $watchdog = @'
-$threshold_high = 75
-$threshold_low  = 20
-$paused = $false
-
+$hi = 75; $lo = 20; $paused = $false
+$vendor = if (Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA|GeForce|RTX|GTX' } | Select-Object -First 1) { 'NVIDIA' } else { 'AMD' }
 while ($true) {
     try {
-        $util = [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits).Trim()
-        if ($util -gt $threshold_high -and -not $paused) {
+        $util = if ($vendor -eq 'NVIDIA') {
+            [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null).Trim()
+        } else {
+            $s = Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction SilentlyContinue
+            if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
+        }
+        if ($util -gt $hi -and -not $paused) {
             wsl -d Ubuntu -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
             $paused = $true
             Add-Content "$env:LOCALAPPDATA\Pulse\watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
-        } elseif ($util -lt $threshold_low -and $paused) {
+        } elseif ($util -lt $lo -and $paused) {
             wsl -d Ubuntu -- bash -c "sudo systemctl start clore-hosting 2>/dev/null"
             $paused = $false
             Add-Content "$env:LOCALAPPDATA\Pulse\watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
