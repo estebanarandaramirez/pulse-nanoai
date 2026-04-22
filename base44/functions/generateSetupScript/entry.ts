@@ -61,6 +61,12 @@ function Show-Banner {
     Write-Host ""
 }
 
+function Wait-ForKey {
+    Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray -NoNewline
+    try { \$null = \$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { Start-Sleep 3 }
+    Write-Host ""
+}
+
 function Get-LocalIP {
     (Get-NetIPAddress -AddressFamily IPv4 |
         Where-Object { $_.InterfaceAlias -notmatch "Loopback|WSL|vEthernet" } |
@@ -73,7 +79,7 @@ function Invoke-Phase1 {
     $build = [System.Environment]::OSVersion.Version.Build
     if ($build -lt 19041) {
         Write-Log "Windows build $build too old. WSL2 requires build 19041+ (Windows 10 2004+)." "ERROR"
-        pause; exit 1
+        Wait-ForKey; exit 1
     }
     Write-Log "Windows build $build — OK" "OK"
 
@@ -82,7 +88,7 @@ function Invoke-Phase1 {
         Select-Object -First 1).Name
     if (-not $gpu) {
         Write-Log "No NVIDIA GPU detected. Pulse requires an NVIDIA GPU." "ERROR"
-        pause; exit 1
+        Wait-ForKey; exit 1
     }
     Write-Log "GPU: $gpu" "OK"
 
@@ -246,7 +252,7 @@ wsl -d Ubuntu -- bash -c "sudo systemctl start clore-hosting 2>/dev/null" 2>&1 |
     Write-Host ""
     Write-Host "  Dashboard: https://pulsenanoai.com" -ForegroundColor Cyan
     Write-Host ""
-    pause
+    Wait-ForKey
 }
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -258,7 +264,7 @@ trap {
     Write-Host "  Log saved to: $LOG_FILE" -ForegroundColor Yellow
     Write-Host "  Please share this with Pulse support at pulsenanoai.com" -ForegroundColor Yellow
     Write-Host ""
-    pause
+    Wait-ForKey
     break
 }
 
@@ -267,7 +273,7 @@ $phase = if (Test-Path $PHASE_FILE) { Get-Content $PHASE_FILE } else { "1" }
 switch ($phase) {
     "1"     { Invoke-Phase1 }
     "2"     { Invoke-Phase2 }
-    default { Write-Host "Unknown phase: $phase" -ForegroundColor Red; pause; exit 1 }
+    default { Write-Host "Unknown phase: $phase" -ForegroundColor Red; Wait-ForKey; exit 1 }
 }
 `;
 
