@@ -197,7 +197,7 @@ function Invoke-Phase2 {
     }
 
     Write-Log "Installing Clore.ai host client inside WSL2..."
-    $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) $CLOREAI_INIT_TOKEN"
+    $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) --init-token $CLOREAI_INIT_TOKEN"
     $cloreOut = wsl -d Ubuntu --user root -- bash -c $cloreInstall 2>&1
     $cloreExit = $LASTEXITCODE
     $cloreOut | ForEach-Object { Write-Log $_ }
@@ -750,7 +750,12 @@ __PULSE_PS1__
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
-  const user = await base44.auth.me();
+  let user: unknown;
+  try {
+    user = await base44.auth.me();
+  } catch {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const cloreInitToken = Deno.env.get('CLOREAI_INIT_TOKEN') ?? 'CLOREAI_INIT_TOKEN_NOT_SET';
@@ -763,6 +768,7 @@ Deno.serve(async (req) => {
   const isOcta = platform === 'octaspace';
   const ps1Filename = isOcta ? 'pulse-octa-setup.ps1' : 'pulse-clore-setup.ps1';
   const batFilename = isOcta ? 'pulse-octa-setup.bat' : 'pulse-clore-setup.bat';
+  const format: string = (body.format ?? 'bat').toLowerCase();
 
   let ps1 = (isOcta ? OCTA_PS1_TEMPLATE : CLORE_PS1_TEMPLATE)
     .replace('{{PULSE_USER_TOKEN}}', userToken)
@@ -770,6 +776,18 @@ Deno.serve(async (req) => {
 
   if (!isOcta) {
     ps1 = ps1.replace('{{CLOREAI_INIT_TOKEN}}', cloreInitToken);
+  }
+
+  // format=ps1 — return the script directly so callers can save it without a
+  // browser-applied Mark-of-the-Web (Zone.Identifier), bypassing Smart App Control.
+  if (format === 'ps1') {
+    return new Response(ps1, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${ps1Filename}"`,
+      },
+    });
   }
 
   const bat = BAT_TEMPLATE.replace('{{PS1_FILENAME}}', ps1Filename) + ps1;

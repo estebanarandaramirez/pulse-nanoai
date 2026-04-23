@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle, Download, ExternalLink, LayoutGrid } from "lucide-react";
+import { CheckCircle, Copy, Download, ExternalLink, LayoutGrid } from "lucide-react";
 import SectionTitle from "../components/shared/SectionTitle";
 
 const STEPS = ["Download Installer", "Run Installer", "Now Earning"];
@@ -41,8 +41,33 @@ export default function ConnectGPU() {
   const [downloaded, setDownloaded] = useState(false);
   const [scriptLoading, setScriptLoading] = useState(false);
   const [scriptError, setScriptError] = useState(null);
+  const [showBlocked, setShowBlocked] = useState(false);
+  const [cmdCopied, setCmdCopied] = useState(false);
 
   const platform = PLATFORMS.find((p) => p.id === selectedPlatform);
+
+  const buildPsCommand = () => {
+    const token = localStorage.getItem("base44_access_token") ?? "";
+    const appId = import.meta.env.VITE_BASE44_APP_ID ?? "";
+    const ps1Filename = platform.filename.replace(".bat", ".ps1");
+    const apiUrl = `https://api.base44.app/api/apps/${appId}/functions/generateSetupScript`;
+    const bodyJson = JSON.stringify({ platform: selectedPlatform, user_token: token, format: "ps1" })
+      .replace(/'/g, "''"); // escape single quotes for PS single-quoted string
+    return [
+      `$p="$env:LOCALAPPDATA\\Pulse"`,
+      `if(!(Test-Path $p)){New-Item -ItemType Directory $p|Out-Null}`,
+      `$f="$p\\${ps1Filename}"`,
+      `[IO.File]::WriteAllText($f,(Invoke-RestMethod -Method POST -Uri '${apiUrl}' -Headers @{Authorization='Bearer ${token}'} -ContentType 'application/json' -Body '${bodyJson}'),[Text.Encoding]::UTF8)`,
+      `& $f`,
+    ].join("; ");
+  };
+
+  const copyPsCommand = () => {
+    navigator.clipboard.writeText(buildPsCommand()).then(() => {
+      setCmdCopied(true);
+      setTimeout(() => setCmdCopied(false), 2000);
+    });
+  };
 
   const downloadSetupScript = async () => {
     setScriptLoading(true);
@@ -102,7 +127,7 @@ export default function ConnectGPU() {
             return (
               <button
                 key={p.id}
-                onClick={() => { setSelectedPlatform(p.id); setResult(null); setGpu(null); }}
+                onClick={() => { setSelectedPlatform(p.id); setDownloaded(false); setShowBlocked(false); }}
                 className={`text-left p-4 rounded-md border transition-all ${
                   active
                     ? `${p.activeBorderClass} ${p.activeBgClass}`
@@ -167,6 +192,54 @@ export default function ConnectGPU() {
             {scriptError}
           </div>
         )}
+
+        {/* Smart App Control / SmartScreen fallback */}
+        <div className="mt-3 border-t border-border/50 pt-3">
+          <button
+            onClick={() => setShowBlocked((v) => !v)}
+            className="text-[9px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {showBlocked ? "▾" : "▸"} Windows blocked the file?
+          </button>
+          {showBlocked && (
+            <div className="mt-2 space-y-2 text-[9px] font-mono text-muted-foreground">
+              <p className="text-foreground/80">Three ways to fix it — any one will work:</p>
+
+              <div className="space-y-1.5">
+                <p className="text-[9px] text-muted-foreground">
+                  <span className="text-foreground">Option A</span> — Right-click the downloaded file → Properties → check{" "}
+                  <span className="text-neon-green">Unblock</span> → OK, then double-click.
+                  <span className="text-muted-foreground/60"> (works for SmartScreen; may not work for Smart App Control)</span>
+                </p>
+
+                <p className="text-[9px] text-muted-foreground">
+                  <span className="text-foreground">Option B</span> — Disable Smart App Control once:{" "}
+                  Windows Security → App &amp; browser control → Smart App Control → <span className="text-neon-green">Off</span>.
+                  Then re-download and run the file.
+                </p>
+
+                <div>
+                  <p className="text-[9px] text-muted-foreground mb-1">
+                    <span className="text-foreground">Option C</span> — Open <span className="text-foreground">PowerShell as Administrator</span> and paste this command.
+                    It downloads the script without a browser zone tag so Windows won't block it:
+                  </p>
+                  <div className="flex items-start gap-2">
+                    <pre className="flex-1 bg-background border border-border rounded px-2 py-1.5 text-[8px] leading-relaxed whitespace-pre-wrap break-all text-muted-foreground/80 select-all">
+                      {buildPsCommand()}
+                    </pre>
+                    <button
+                      onClick={copyPsCommand}
+                      className="flex-shrink-0 flex items-center gap-1 px-2 py-1.5 border border-border rounded text-[8px] text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
+                    >
+                      <Copy className="w-2.5 h-2.5" />
+                      {cmdCopied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Progress steps */}

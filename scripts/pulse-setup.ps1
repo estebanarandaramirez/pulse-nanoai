@@ -255,7 +255,7 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
 
     # ── Install Clore.ai host client inside WSL2 ─────────────────────────────
     Write-Log "Installing Clore.ai host client inside WSL2..."
-    $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) $CLOREAI_INIT_TOKEN"
+    $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) --init-token $CLOREAI_INIT_TOKEN"
     $cloreOutput = wsl -d Ubuntu --user root -- bash -c $cloreInstall 2>&1
     $cloreExit = $LASTEXITCODE
     $cloreOutput | ForEach-Object { Write-Log $_ }
