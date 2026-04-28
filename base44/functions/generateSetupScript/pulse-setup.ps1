@@ -284,6 +284,7 @@ function Invoke-Phase2 {
     Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
     Register-Step "Build tools (gcc, python3-dev)" "wsl -d Ubuntu -- bash -c 'apt-get update && apt-get install -y build-essential python3-dev'"
     Register-Step "Clore.ai host client" "Check gitlab.com/cloreai-public/hosting for install.sh status"
+    Register-Step "Clore.ai init token" "Re-download installer from Pulse dashboard — init token may be single-use"
     Register-Step "Clore server ID"
     Register-Step "Windows Firewall rules"
     Register-Step "UPnP port forwarding"
@@ -431,11 +432,35 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     Write-Log "Clore.ai install complete" "OK"
     Set-Step "Clore.ai host client" "PASS"
 
+    # Register this machine with Clore.ai using the init token.
+    # install.sh only sets up the Python environment; hosting.py --init-token
+    # is the separate step that contacts Clore's servers and writes /opt/clore-hosting/client/auth.
+    # Without auth the service.sh loop does nothing.
+    Write-Log "Registering machine with Clore.ai init token..."
+    $initOutput = wsl -d Ubuntu --user root -- bash -c "bash /opt/clore-hosting/clore.sh --init-token $CLOREAI_INIT_TOKEN" 2>&1
+    $initExit = $LASTEXITCODE
+    $initOutput | ForEach-Object { Write-Log $_ }
+    if ($initExit -ne 0) {
+        Set-Step "Clore.ai init token" "FAIL" "hosting.py --init-token exited $initExit — token may be single-use or expired"
+        Write-Log "Init token registration failed (exit $initExit). Re-download the installer from the Pulse dashboard to get a fresh token." "ERROR"
+        Show-Diagnostics; Wait-ForKey; exit 1
+    }
+    Write-Log "Clore.ai init token accepted — auth file created" "OK"
+    Set-Step "Clore.ai init token" "PASS"
+
+    # Now start the service so it begins serving jobs.
+    Write-Log "Enabling and starting clore-hosting service..."
+    wsl -d Ubuntu --user root -- bash -c "systemctl enable clore-hosting 2>/dev/null; systemctl start clore-hosting 2>/dev/null"
+    Start-Sleep 10
+
     # ── Poll for server ID (Clore.ai can take ~2 min to assign) ──────────────
-    Write-Log "Waiting for Clore.ai to assign server ID..."
+    Write-Log "Waiting for Clore.ai to assign server ID (service is now running)..."
     $serverId = ""
-    for ($i = 1; $i -le 12; $i++) {
-        $raw = wsl -d Ubuntu --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null" 2>&1
+    for ($i = 1; $i -le 18; $i++) {
+        $raw = wsl -d Ubuntu --user root -- bash -c "
+for f in /opt/clore-hosting/client/server_id \$(find /opt/clore-hosting/client -name 'server_id' 2>/dev/null | head -1); do
+    [ -f ""\$f"" ] && cat ""\$f"" && break
+done" 2>&1
         $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
         if ($candidate) { $serverId = $candidate.Trim(); break }
         Write-Log "  Still waiting... ($($i * 10)s elapsed)"
@@ -445,8 +470,8 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
         Write-Log "Clore.ai Server ID: $serverId" "OK"
         Set-Step "Clore server ID" "PASS" "ID: $serverId"
     } else {
-        Write-Log "Server ID not yet assigned — check the Pulse dashboard in a few minutes" "WARN"
-        Set-Step "Clore server ID" "WARN" "Not yet assigned — check dashboard in a few minutes"
+        Write-Log "Server ID not yet assigned after 3 min — service is running; ID should appear in the Pulse dashboard within ~5 min" "WARN"
+        Set-Step "Clore server ID" "WARN" "Not yet assigned — service running, check dashboard in ~5 min"
         $serverId = ""
     }
 
