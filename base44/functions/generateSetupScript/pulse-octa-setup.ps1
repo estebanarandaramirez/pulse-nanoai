@@ -75,6 +75,71 @@ function Wait-ForKey {
     Read-Host "  Press Enter to close this window"
 }
 
+# ── Diagnostics checklist ─────────────────────────────────────────────────────
+$script:Steps = [ordered]@{}
+
+function Register-Step {
+    param([string]$name, [string]$fix = "")
+    $script:Steps[$name] = @{ Status = "PENDING"; Detail = ""; Fix = $fix }
+}
+
+function Set-Step {
+    param([string]$name, [string]$status, [string]$detail = "")
+    if ($script:Steps.Contains($name)) {
+        $script:Steps[$name].Status = $status
+        if ($detail) { $script:Steps[$name].Detail = $detail }
+    }
+}
+
+function Show-Diagnostics {
+    param([switch]$LogOnly)
+    $sep    = "  " + ("─" * 65)
+    $logSep = "─" * 67
+    $ts     = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    if (-not $LogOnly) {
+        Write-Host ""
+        Write-Host $sep -ForegroundColor DarkGray
+        Write-Host "  INSTALL DIAGNOSTICS" -ForegroundColor White
+        Write-Host $sep -ForegroundColor DarkGray
+    }
+
+    Add-Content -Path $LOG_FILE -Value "" -Encoding UTF8
+    Add-Content -Path $LOG_FILE -Value $logSep -Encoding UTF8
+    Add-Content -Path $LOG_FILE -Value "INSTALL DIAGNOSTICS  $ts" -Encoding UTF8
+    Add-Content -Path $LOG_FILE -Value $logSep -Encoding UTF8
+
+    foreach ($name in $script:Steps.Keys) {
+        $s     = $script:Steps[$name]
+        $icon  = switch ($s.Status) { "PASS" {"[OK]"} "FAIL" {"[X] "} "WARN" {"[!!]"} "SKIP" {"[--]"} default {"[  ]"} }
+        $color = switch ($s.Status) { "PASS" {"Green"} "FAIL" {"Red"} "WARN" {"Yellow"} "SKIP" {"DarkGray"} default {"DarkGray"} }
+
+        if ($s.Status -eq "PENDING") {
+            if (-not $LogOnly) { Write-Host ("  {0} {1,-55} {2}" -f $icon, $name, "(not reached)") -ForegroundColor DarkGray }
+            Add-Content -Path $LOG_FILE -Value ("  $icon $name  (not reached)") -Encoding UTF8
+        } else {
+            if (-not $LogOnly) {
+                Write-Host "  $icon $name" -ForegroundColor $color
+                if ($s.Detail) { Write-Host "       $($s.Detail)" -ForegroundColor DarkGray }
+                if ($s.Status -eq "FAIL" -and $s.Fix) { Write-Host "       Fix: $($s.Fix)" -ForegroundColor Yellow }
+            }
+            Add-Content -Path $LOG_FILE -Value "  $icon $name" -Encoding UTF8
+            if ($s.Detail) { Add-Content -Path $LOG_FILE -Value "       $($s.Detail)" -Encoding UTF8 }
+            if ($s.Status -eq "FAIL" -and $s.Fix) { Add-Content -Path $LOG_FILE -Value "       Fix: $($s.Fix)" -Encoding UTF8 }
+        }
+    }
+
+    Add-Content -Path $LOG_FILE -Value $logSep -Encoding UTF8
+
+    if (-not $LogOnly) {
+        Write-Host $sep -ForegroundColor DarkGray
+        Write-Host "  Full log: $LOG_FILE" -ForegroundColor DarkGray
+        Write-Host "  Share with Pulse support at pulsenanoai.com" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+}
+# ─────────────────────────────────────────────────────────────────────────────
+
 function Get-LocalIP {
     (Get-NetIPAddress -AddressFamily IPv4 |
         Where-Object { $_.InterfaceAlias -notmatch "Loopback|WSL|vEthernet" } |
@@ -100,26 +165,39 @@ function Set-WSL2PortProxy {
 function Invoke-Phase1 {
     Show-Banner "Phase 1 of 2 — Enabling WSL2"
 
+    $script:Steps = [ordered]@{}
+    Register-Step "Windows compatibility (build 19041+)"
+    Register-Step "GPU detected"
+    Register-Step "Virtualization enabled in BIOS"
+    Register-Step "WSL2 features enabled"
+    Register-Step "WSL2 kernel update"
+    Register-Step "Phase 2 resume task"
+
     $build = [System.Environment]::OSVersion.Version.Build
     if ($build -lt 19041) {
+        Set-Step "Windows compatibility (build 19041+)" "FAIL" "Build $build — requires 19041 (Windows 10 2004+)"
         Write-Log "Windows build $build is too old. WSL2 requires build 19041+ (Windows 10 2004+)." "ERROR"
-        Wait-ForKey; exit 1
+        Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "Windows build $build — OK" "OK"
+    Set-Step "Windows compatibility (build 19041+)" "PASS" "Build $build"
 
     $gpu = (Get-WmiObject Win32_VideoController |
         Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|AMD|Radeon" } |
         Select-Object -First 1).Name
     if (-not $gpu) {
+        Set-Step "GPU detected" "FAIL" "No NVIDIA/AMD GPU found"
         Write-Log "No supported GPU detected. Pulse requires an NVIDIA or AMD GPU." "ERROR"
-        Wait-ForKey; exit 1
+        Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "GPU: $gpu" "OK"
+    Set-Step "GPU detected" "PASS" $gpu
 
     New-Item -ItemType Directory -Force -Path $PULSE_DIR | Out-Null
 
     $virtEnabled = (Get-ComputerInfo).HyperVRequirementVirtualizationFirmwareEnabled
     if ($virtEnabled -eq $false) {
+        Set-Step "Virtualization enabled in BIOS" "FAIL" "Disabled — see BIOS instructions below"
         Write-Log "Hardware virtualization is disabled in your BIOS/UEFI." "ERROR"
         Write-Host ""
         Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Red
@@ -135,14 +213,16 @@ function Invoke-Phase1 {
         Write-Host "  │  Then re-run this installer.                                 │" -ForegroundColor Red
         Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Red
         Write-Host ""
-        Wait-ForKey; exit 1
+        Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "Hardware virtualization enabled in BIOS — OK" "OK"
+    Set-Step "Virtualization enabled in BIOS" "PASS"
 
     Write-Log "Enabling WSL2 Windows features..."
     dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
     dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
     Write-Log "WSL2 features enabled" "OK"
+    Set-Step "WSL2 features enabled" "PASS"
 
     Write-Log "Installing WSL2 kernel update..."
     $msi = "$env:TEMP\wsl_update.msi"
@@ -154,6 +234,7 @@ function Invoke-Phase1 {
     } catch {
         Write-Log "WSL2 kernel already up to date" "OK"
     }
+    Set-Step "WSL2 kernel update" "PASS"
 
     wsl --set-default-version 2 2>&1 | Out-Null
 
@@ -172,6 +253,7 @@ function Invoke-Phase1 {
     Register-ScheduledTask -TaskName $TASK_NAME -Action $action -Trigger $trigger `
         -Settings $settings -Principal $principal -Force | Out-Null
     Write-Log "Phase 2 resume task registered" "OK"
+    Set-Step "Phase 2 resume task" "PASS"
 
     Write-Host ""
     Write-Host "  ┌─────────────────────────────────────────┐" -ForegroundColor Yellow
@@ -188,6 +270,23 @@ function Invoke-Phase1 {
 
 function Invoke-Phase2 {
     Show-Banner "Phase 2 of 2 — Installing OctaSpace Provider Stack"
+
+    $script:Steps = [ordered]@{}
+    Register-Step "Ubuntu on WSL2"
+    Register-Step "systemd in WSL2"
+    Register-Step "WSL2 networking"
+    Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
+    Register-Step "Build tools (curl, bash)" "wsl -d Ubuntu -- bash -c 'apt-get update && apt-get install -y curl bash'"
+    Register-Step "OctaSpace osn installed" "Check install.octa.space or OctaSpace docs"
+    Register-Step "osn service started"
+    Register-Step "OctaSpace node token"
+    Register-Step "Windows Firewall rules"
+    Register-Step "UPnP port forwarding"
+    Register-Step "WSL2 port proxy"
+    Register-Step "Pulse registration"
+    Register-Step "GPU watchdog task"
+    Register-Step "Auto-start task"
+    Register-Step "Auto-login"
 
     Write-Log "Setting up Ubuntu on WSL2..."
     $distros = wsl --list --quiet 2>&1
@@ -213,6 +312,7 @@ function Invoke-Phase2 {
     } else {
         Write-Log "Ubuntu already present" "OK"
     }
+    Set-Step "Ubuntu on WSL2" "PASS"
 
     # Enable systemd — osn is a systemd service
     Write-Log "Enabling systemd in WSL2 (required for osn service)..."
@@ -236,8 +336,10 @@ function Invoke-Phase2 {
         }
         $mirroredNetworking = $true
         Write-Log "WSL2 mirrored networking configured — UDP tunnels will work correctly" "OK"
+        Set-Step "WSL2 networking" "PASS" "Mirrored (Windows 11 22H2+) — UDP tunnels fully functional"
     } else {
         Write-Log "Windows build ${osBuild}: mirrored networking needs 22H2 (22621+) — portproxy only covers TCP; UDP tunnels will be limited" "WARN"
+        Set-Step "WSL2 networking" "WARN" "Portproxy only (build $osBuild) — UDP tunnel ports limited; upgrade to Win 11 22H2+ recommended"
     }
 
     wsl --shutdown
@@ -245,8 +347,10 @@ function Invoke-Phase2 {
     $sdCheck = wsl -d Ubuntu --user root -- bash -c "[ -d /run/systemd/system ] && echo yes || echo no" 2>&1
     if ($sdCheck -match "yes") {
         Write-Log "systemd running in WSL2" "OK"
+        Set-Step "systemd in WSL2" "PASS"
     } else {
         Write-Log "systemd may not be active — osn may not auto-start on reboot" "WARN"
+        Set-Step "systemd in WSL2" "WARN" "systemd not detected — osn service may not persist across reboots"
     }
 
     # ── Detect GPU vendor ─────────────────────────────────────────────────────
@@ -262,8 +366,10 @@ function Invoke-Phase2 {
         $nvCheck = wsl -d Ubuntu --user root -- bash -c "nvidia-smi -L 2>/dev/null | head -1" 2>&1
         if ($nvCheck -match "GPU 0") {
             Write-Log "NVIDIA GPU visible in WSL2" "OK"
+            Set-Step "GPU compute in WSL2" "PASS" "nvidia-smi OK — $gpuName"
         } else {
             Write-Log "NVIDIA GPU not yet visible in WSL2 — ensure Windows NVIDIA driver is up to date" "WARN"
+            Set-Step "GPU compute in WSL2" "WARN" "nvidia-smi returned no output — osn may fail without GPU access"
         }
     } else {
         Write-Log "Installing ROCm for AMD GPU in WSL2 (this takes a few minutes)..."
@@ -283,28 +389,38 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
         wsl -d Ubuntu --user root -- bash -c $rocmScript 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -eq 0) {
             Write-Log "ROCm installed" "OK"
+            Set-Step "GPU compute in WSL2" "PASS" "ROCm opencl-runtime installed — $gpuName"
         } else {
             Write-Log "ROCm install encountered errors — OctaSpace may have limited AMD support" "WARN"
+            Set-Step "GPU compute in WSL2" "WARN" "ROCm install had errors — AMD support may be limited"
         }
     }
 
     # ── Install OctaSpace node (osn) inside WSL2 ─────────────────────────────
     Write-Log "Installing build tools required by osn installer (curl, bash)..."
-    wsl -d Ubuntu --user root -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl bash 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
+    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -2 && apt-get install -y -qq curl bash 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
+    if ($LASTEXITCODE -eq 0) {
+        Set-Step "Build tools (curl, bash)" "PASS"
+    } else {
+        Set-Step "Build tools (curl, bash)" "WARN" "apt-get exit $LASTEXITCODE — osn installer will attempt to continue anyway"
+    }
 
     Write-Log "Installing OctaSpace node (osn) inside WSL2..."
     $octaOutput = wsl -d Ubuntu --user root -- bash -c "curl -fsSL https://install.octa.space | bash" 2>&1
     $octaExit = $LASTEXITCODE
     $octaOutput | ForEach-Object { Write-Log $_ }
     if ($octaExit -ne 0) {
+        Set-Step "OctaSpace osn installed" "FAIL" "install.octa.space script exited $octaExit — see log for details"
         Write-Log "OctaSpace installation failed (exit $octaExit). Check the output above." "ERROR"
-        Wait-ForKey; exit 1
+        Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "OctaSpace osn install complete" "OK"
+    Set-Step "OctaSpace osn installed" "PASS"
 
     # Start the service so it can register and generate a node token
     Write-Log "Starting osn service..."
     wsl -d Ubuntu --user root -- bash -c "systemctl enable osn 2>/dev/null; systemctl start osn 2>/dev/null"
+    Set-Step "osn service started" "PASS"
 
     # ── Poll for OctaSpace node token ─────────────────────────────────────────
     Write-Log "Waiting for OctaSpace node token..."
@@ -323,8 +439,10 @@ done
     }
     if ($octaNodeToken) {
         Write-Log "OctaSpace node token: $octaNodeToken" "OK"
+        Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
     } else {
         Write-Log "Node token not yet found — check cube.octa.computer after setup completes" "WARN"
+        Set-Step "OctaSpace node token" "WARN" "Not yet assigned — check cube.octa.computer"
     }
 
     # ── Networking: Windows Firewall + UPnP ──────────────────────────────────
@@ -337,6 +455,7 @@ done
             -Protocol UDP -LocalPort $port -Action Allow -ErrorAction SilentlyContinue | Out-Null
     }
     Write-Log "Firewall rules added (TCP+UDP) for ports $($OCTA_MGMT_PORTS -join ', ') + $OCTA_APP_PORT_START-$OCTA_APP_PORT_END" "OK"
+    Set-Step "Windows Firewall rules" "PASS" "TCP+UDP $($OCTA_MGMT_PORTS -join ', '), $OCTA_APP_PORT_START-$OCTA_APP_PORT_END"
 
     Write-Log "Attempting UPnP automatic port forwarding..."
     $localIP = Get-LocalIP
@@ -349,9 +468,11 @@ done
             $mappings.Add($port, "UDP", $port, $localIP, $true, "Pulse-Octa-UDP-$port") | Out-Null
         }
         Write-Log "UPnP succeeded — ports $($OCTA_MGMT_PORTS -join ', '), $OCTA_APP_PORT_START-$OCTA_APP_PORT_END forwarded (TCP+UDP) to $localIP" "OK"
+        Set-Step "UPnP port forwarding" "PASS" "Auto-forwarded (TCP+UDP) → $localIP"
         $upnpOk = $true
     } catch {
         Write-Log "UPnP unavailable on this router" "WARN"
+        Set-Step "UPnP port forwarding" "WARN" "UPnP unavailable — manual router setup required (TCP+UDP, see above)"
     }
 
     if (-not $upnpOk) {
@@ -381,11 +502,14 @@ done
         if ($wslIP) {
             Set-WSL2PortProxy -WslIP $wslIP
             Set-Content -Path "$PULSE_DIR\last_wsl_ip" -Value $wslIP -Encoding UTF8
+            Set-Step "WSL2 port proxy" "PASS" "TCP → $wslIP (UDP requires mirrored networking)"
         } else {
             Write-Log "Could not determine WSL2 IP — portproxy skipped; will retry on next login" "WARN"
+            Set-Step "WSL2 port proxy" "WARN" "WSL2 IP not found — will retry on next login"
         }
     } else {
         Write-Log "Mirrored networking active — portproxy not needed; UDP tunnels fully functional" "OK"
+        Set-Step "WSL2 port proxy" "SKIP" "Not needed — mirrored networking active"
     }
 
     # ── Cube registration ─────────────────────────────────────────────────────
@@ -424,8 +548,10 @@ done
             -Headers @{ "Authorization" = "Bearer $PULSE_USER_TOKEN" } `
             -Body $body
         Write-Log "Pulse registration: $($resp.message)" "OK"
+        Set-Step "Pulse registration" "PASS"
     } catch {
         Write-Log "Pulse registration failed (will retry on next start): $_" "WARN"
+        Set-Step "Pulse registration" "WARN" "Will retry automatically on next login"
     }
 
     # ── GPU Watchdog: pause osn during gaming ─────────────────────────────────
@@ -465,6 +591,7 @@ while ($true) {
     Register-ScheduledTask -TaskName $WATCHDOG_TASK -Action $wA -Trigger $wT `
         -Settings $wS -Principal $wP -Force | Out-Null
     Write-Log "GPU watchdog installed (pauses during gaming, resumes when idle)" "OK"
+    Set-Step "GPU watchdog task" "PASS"
 
     # ── Auto-start: osn on every login ────────────────────────────────────────
     Write-Log "Installing auto-start task..."
@@ -502,6 +629,7 @@ wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
     Register-ScheduledTask -TaskName $AUTOSTART_TASK -Action $sA -Trigger $sT `
         -Settings $sS -Principal $sP -Force | Out-Null
     Write-Log "Auto-start installed" "OK"
+    Set-Step "Auto-start task" "PASS"
 
     # ── Auto-login: survive unattended reboots ────────────────────────────────
     Write-Host ""
@@ -532,8 +660,10 @@ wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
 
         Write-Log "Auto-login enabled for $env:USERNAME — OctaSpace resumes automatically after any reboot" "OK"
         Write-Log "To disable: run netplwiz and re-check 'Users must enter a username and password'" "INFO"
+        Set-Step "Auto-login" "PASS" "Enabled for $env:USERNAME"
     } else {
         Write-Log "Auto-login skipped — machine will need a manual login after reboot to resume OctaSpace" "WARN"
+        Set-Step "Auto-login" "SKIP" "Skipped — GPU goes offline after unattended reboots"
     }
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
@@ -541,6 +671,9 @@ wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
     Remove-Item $PHASE_FILE -ErrorAction SilentlyContinue
 
     # ── Summary ───────────────────────────────────────────────────────────────
+    # Write final diagnostics snapshot to log (screen output is the clean summary below)
+    Show-Diagnostics -LogOnly
+
     Show-Banner "Setup Complete"
     Write-Host "  Your GPU is now earning via Pulse + OctaSpace." -ForegroundColor Green
     Write-Host ""
@@ -557,6 +690,18 @@ wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
     Write-Host "  Dashboard:  https://beneficial-deep-work-flow.base44.app" -ForegroundColor Cyan
     Write-Host "  Cube:       https://cube.octa.computer" -ForegroundColor Cyan
     Write-Host ""
+    Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor DarkGray
+    Write-Host "  │  INSTALL LOG                                                 │" -ForegroundColor DarkGray
+    Write-Host "  │                                                              │" -ForegroundColor DarkGray
+    Write-Host "  │  A full log of every install step was saved to:              │" -ForegroundColor DarkGray
+    Write-Host ("  │    {0,-60}│" -f $LOG_FILE) -ForegroundColor White
+    Write-Host "  │                                                              │" -ForegroundColor DarkGray
+    Write-Host "  │  To open it:   notepad `"$LOG_FILE`"" -ForegroundColor DarkGray
+    Write-Host "  │  To browse:    Run → %LOCALAPPDATA%\Pulse                    │" -ForegroundColor DarkGray
+    Write-Host "  │                                                              │" -ForegroundColor DarkGray
+    Write-Host "  │  Share it with Pulse support if anything looks wrong.        │" -ForegroundColor DarkGray
+    Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor DarkGray
+    Write-Host ""
     Wait-ForKey
 }
 
@@ -566,10 +711,7 @@ trap {
     Write-Host ""
     Write-Host "  [ERROR] An unexpected error stopped the installer:" -ForegroundColor Red
     Write-Host "  $_" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Log saved to: $LOG_FILE" -ForegroundColor Yellow
-    Write-Host "  Please share this with Pulse support at pulsenanoai.com" -ForegroundColor Yellow
-    Write-Host ""
+    Show-Diagnostics
     Read-Host "  Press Enter to close this window"
     exit 1
 }
