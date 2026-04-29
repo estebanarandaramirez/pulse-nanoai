@@ -283,7 +283,7 @@ function Invoke-Phase2 {
     Register-Step "systemd in WSL2"
     Register-Step "WSL2 networking"
     Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
-    Register-Step "Build tools (gcc, python3-dev)" "wsl -d Ubuntu -- bash -c 'apt-get update && apt-get install -y build-essential python3-dev'"
+    Register-Step "Build tools (gcc, python3-dev)" "wsl -d Ubuntu-22.04 -- bash -c 'apt-get update && apt-get install -y build-essential python3-dev'"
     Register-Step "Clore.ai host client" "Check gitlab.com/cloreai-public/hosting for install.sh status"
     Register-Step "Clore fleet onboarding" "Re-download installer from Pulse dashboard to get a fresh fleet token"
     Register-Step "Clore server ID"
@@ -298,17 +298,17 @@ function Invoke-Phase2 {
     # Install Ubuntu
     Write-Log "Setting up Ubuntu on WSL2..."
     $distros = wsl --list --quiet 2>&1
-    if ($distros -notmatch "Ubuntu") {
-        Write-Log "Downloading Ubuntu..."
-        wsl --install -d Ubuntu --no-launch 2>&1 | Out-Null
+    if ($distros -notmatch "Ubuntu-22.04") {
+        Write-Log "Downloading Ubuntu 22.04..."
+        wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-Null
 
         # --no-launch downloads but doesn't initialize. Force a headless first-boot
         # so the distro registers as usable (creates root fs, default user = root).
         Write-Log "Initializing Ubuntu (first boot)..."
-        wsl -d Ubuntu --user root -- bash -c "echo initialized" 2>&1 | Out-Null
+        wsl -d Ubuntu-22.04 --user root -- bash -c "echo initialized" 2>&1 | Out-Null
 
         # If the distro still isn't ready, fall back to wsl --install without --no-launch
-        $check = wsl -d Ubuntu -- echo "ok" 2>&1
+        $check = wsl -d Ubuntu-22.04 -- echo "ok" 2>&1
         if ($check -notmatch "ok") {
             Write-Log "Headless init failed — launching Ubuntu for first-time setup..." "WARN"
             Write-Host ""
@@ -316,7 +316,7 @@ function Invoke-Phase2 {
             Write-Host "  Create a Linux username + password, then close that window." -ForegroundColor Yellow
             Write-Host "  This installer will continue automatically." -ForegroundColor Yellow
             Write-Host ""
-            Start-Process wsl.exe -ArgumentList "-d Ubuntu" -Wait
+            Start-Process wsl.exe -ArgumentList "-d Ubuntu-22.04" -Wait
         }
 
         Write-Log "Ubuntu installed and initialized" "OK"
@@ -328,7 +328,7 @@ function Invoke-Phase2 {
     # Enable systemd — clore-hosting is a systemd service; without this it silently
     # fails to start after every reboot.
     Write-Log "Enabling systemd in WSL2 (required for clore-hosting service)..."
-    wsl -d Ubuntu --user root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null || printf '[boot]\nsystemd=true\n' > /etc/wsl.conf"
+    wsl -d Ubuntu-22.04 --user root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null || printf '[boot]\nsystemd=true\n' > /etc/wsl.conf"
 
     # WSL2 mirrored networking (Windows 11 22H2+): WSL2 shares the Windows host IP,
     # eliminating portproxy rules entirely and fixing the dynamic-IP problem.
@@ -356,7 +356,7 @@ function Invoke-Phase2 {
 
     wsl --shutdown
     Start-Sleep 20
-    $sdCheck = wsl -d Ubuntu --user root -- bash -c "[ -d /run/systemd/system ] && echo yes || echo no" 2>&1
+    $sdCheck = wsl -d Ubuntu-22.04 --user root -- bash -c "[ -d /run/systemd/system ] && echo yes || echo no" 2>&1
     if ($sdCheck -match "yes") {
         Write-Log "systemd running in WSL2" "OK"
         Set-Step "systemd in WSL2" "PASS"
@@ -378,7 +378,7 @@ function Invoke-Phase2 {
     # AMD: ROCm userspace must be installed explicitly (no kernel module needed).
     Write-Log "Checking GPU compute environment in WSL2 ($gpuVendor)..."
     if ($gpuVendor -eq "NVIDIA") {
-        $nvCheck = wsl -d Ubuntu --user root -- bash -c "nvidia-smi -L 2>/dev/null | head -1" 2>&1
+        $nvCheck = wsl -d Ubuntu-22.04 --user root -- bash -c "nvidia-smi -L 2>/dev/null | head -1" 2>&1
         if ($nvCheck -match "GPU 0") {
             Write-Log "NVIDIA GPU visible in WSL2" "OK"
             Set-Step "GPU compute in WSL2" "PASS" "nvidia-smi OK — $gpuName"
@@ -388,7 +388,7 @@ function Invoke-Phase2 {
         }
     } else {
         Write-Log "Installing ROCm for AMD GPU in WSL2 (this takes a few minutes)..."
-        $ubuntuVer = wsl -d Ubuntu --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
+        $ubuntuVer = wsl -d Ubuntu-22.04 --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
         $ubuntuVer = $ubuntuVer.Trim()
         if ($ubuntuVer -notin @("jammy","focal","noble")) { $ubuntuVer = "jammy" }
         $rocmScript = @"
@@ -401,7 +401,7 @@ echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.
 apt-get update -qq 2>&1 | tail -2
 apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
 "@
-        wsl -d Ubuntu --user root -- bash -c $rocmScript 2>&1 | ForEach-Object { Write-Log $_ }
+        wsl -d Ubuntu-22.04 --user root -- bash -c $rocmScript 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -eq 0) {
             Write-Log "ROCm installed" "OK"
             Set-Step "GPU compute in WSL2" "PASS" "ROCm opencl-runtime installed — $gpuName"
@@ -413,7 +413,7 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
 
     # ── Install Clore.ai host client inside WSL2 ─────────────────────────────
     Write-Log "Installing build tools required by Clore.ai (gcc, python3-dev, python3-pip)..."
-    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -2 && apt-get install -y -qq build-essential python3-dev python3-pip 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
+    wsl -d Ubuntu-22.04 --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -2 && apt-get install -y -qq build-essential python3-dev python3-pip 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
     if ($LASTEXITCODE -eq 0) {
         Set-Step "Build tools (gcc, python3-dev)" "PASS"
     } else {
@@ -422,7 +422,7 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
 
     Write-Log "Installing Clore.ai host client inside WSL2..."
     $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh)"
-    $cloreOutput = wsl -d Ubuntu --user root -- bash -c $cloreInstall 2>&1
+    $cloreOutput = wsl -d Ubuntu-22.04 --user root -- bash -c $cloreInstall 2>&1
     $cloreExit = $LASTEXITCODE
     $cloreOutput | ForEach-Object { Write-Log $_ }
     if ($cloreExit -ne 0) {
@@ -455,8 +455,9 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     $onboardingJson = ($onboardingObj | ConvertTo-Json -Depth 2) -replace "`r`n", "`n"
 
     Write-Log "Writing onboarding.json to WSL2..."
-    wsl -d Ubuntu --user root -- bash -c "mkdir -p /opt/clore-hosting"
-    [System.IO.File]::WriteAllText("\\wsl$\Ubuntu\opt\clore-hosting\onboarding.json", $onboardingJson, [System.Text.Encoding]::UTF8)
+    wsl -d Ubuntu-22.04 --user root -- bash -c "mkdir -p /opt/clore-hosting"
+    $onboardingB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($onboardingJson))
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$onboardingB64' | base64 -d > /opt/clore-hosting/onboarding.json"
     Write-Log "onboarding.json written (mrl=$($fleetCfg.mrl)h)" "OK"
 
     # ── Install clore-onboarding service ─────────────────────────────────────
@@ -479,7 +480,8 @@ RestartSec=10
 WantedBy=multi-user.target
 "@ -replace "`r`n", "`n"
 
-    [System.IO.File]::WriteAllText("\\wsl$\Ubuntu\etc\systemd\system\clore-onboarding.service", $onboardingUnit, [System.Text.Encoding]::UTF8)
+    $unitB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($onboardingUnit))
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$unitB64' | base64 -d > /etc/systemd/system/clore-onboarding.service"
 
     $setupOnboarding = (@'
 set -e
@@ -492,8 +494,9 @@ systemctl enable clore-hosting
 systemctl enable clore-onboarding
 systemctl start clore-onboarding
 '@) -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText("\\wsl$\Ubuntu\tmp\setup_onboarding.sh", $setupOnboarding, [System.Text.Encoding]::UTF8)
-    $onboardOutput = wsl -d Ubuntu --user root -- bash /tmp/setup_onboarding.sh 2>&1
+    $setupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($setupOnboarding))
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d > /tmp/setup_onboarding.sh"
+    $onboardOutput = wsl -d Ubuntu-22.04 --user root -- bash /tmp/setup_onboarding.sh 2>&1
     $onboardExit = $LASTEXITCODE
     $onboardOutput | ForEach-Object { Write-Log $_ }
     if ($onboardExit -ne 0) {
@@ -512,7 +515,7 @@ systemctl start clore-onboarding
     Write-Log "Waiting for Clore.ai to assign server ID (service is now running)..."
     $serverId = ""
     for ($i = 1; $i -le 18; $i++) {
-        $raw = wsl -d Ubuntu --user root -- bash -c "
+        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "
 for f in /opt/clore-hosting/client/server_id \$(find /opt/clore-hosting/client -name 'server_id' 2>/dev/null | head -1); do
     [ -f ""\$f"" ] && cat ""\$f"" && break
 done" 2>&1
@@ -585,7 +588,7 @@ done" 2>&1
     # Skipped on Windows 11 22H2+ where mirrored networking means WSL2 IS the host IP.
     if (-not $mirroredNetworking) {
         Write-Log "Configuring WSL2 port proxy (Windows host → WSL2 bridge)..."
-        $wslIP = (wsl -d Ubuntu --user root -- bash -c "hostname -I 2>/dev/null").Trim().Split()[0]
+        $wslIP = (wsl -d Ubuntu-22.04 --user root -- bash -c "hostname -I 2>/dev/null").Trim().Split()[0]
         if ($wslIP) {
             Set-WSL2PortProxy -WslIP $wslIP
             Set-Content -Path "$PULSE_DIR\last_wsl_ip" -Value $wslIP -Encoding UTF8
@@ -636,11 +639,11 @@ while ($true) {
             if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
         }
         if ($util -gt $hi -and -not $paused) {
-            wsl -d Ubuntu -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
+            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
             $paused = $true
             Add-Content "$env:LOCALAPPDATA\Pulse\watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
         } elseif ($util -lt $lo -and $paused) {
-            wsl -d Ubuntu -- bash -c "sudo systemctl start clore-hosting 2>/dev/null"
+            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start clore-hosting 2>/dev/null"
             $paused = $false
             Add-Content "$env:LOCALAPPDATA\Pulse\watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
         }
@@ -667,14 +670,14 @@ while ($true) {
         # Mirrored networking: WSL2 IP is stable, no portproxy refresh needed
         @'
 Start-Sleep 15
-wsl -d Ubuntu -- bash -c 'sudo systemctl start clore-onboarding 2>/dev/null; sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
+wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-onboarding 2>/dev/null; sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
     Add-Content "$env:LOCALAPPDATA\Pulse\autostart.log"
 '@
     } else {
         # Portproxy: WSL2 gets a new IP on each restart — only refresh when it changes
         @"
 Start-Sleep 15
-`$wslIP = (wsl -d Ubuntu --user root -- bash -c 'hostname -I 2>/dev/null').Trim().Split()[0]
+`$wslIP = (wsl -d Ubuntu-22.04 --user root -- bash -c 'hostname -I 2>/dev/null').Trim().Split()[0]
 `$lastIPFile = "`$env:LOCALAPPDATA\Pulse\last_wsl_ip"
 `$lastIP = if (Test-Path `$lastIPFile) { (Get-Content `$lastIPFile).Trim() } else { '' }
 if (`$wslIP -and `$wslIP -ne `$lastIP) {
@@ -684,7 +687,7 @@ if (`$wslIP -and `$wslIP -ne `$lastIP) {
     }
     Set-Content -Path `$lastIPFile -Value `$wslIP
 }
-wsl -d Ubuntu -- bash -c 'sudo systemctl start clore-onboarding 2>/dev/null; sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
+wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-onboarding 2>/dev/null; sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
     Add-Content "`$env:LOCALAPPDATA\Pulse\autostart.log"
 "@
     }
