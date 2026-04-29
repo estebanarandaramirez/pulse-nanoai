@@ -3,7 +3,7 @@
 # Paste the base64 token from clore.ai/my-servers -> Mass Onboard into $CLOREAI_FLEET_TOKEN.
 # No WSL, no GPU needed.
 
-$CLOREAI_FLEET_TOKEN = "eyJhdXRoIjoiYnUxelMvN3R6WklnRnBvdlBFbzc5Vlg3MUJ6REEvR2Izd2V2RUV6Vm82az0iLCJtcmwiOjEyLCJvbl9kZW1hbmRfYml0Y29pbiI6MC4wMDAxLCJvbl9kZW1hbmRfY2xvcmUiOjUwMDAsInNwb3RfYml0Y29pbiI6MC4wMDAxLCJzcG90X2Nsb3JlIjo1MDAwLCJvbl9kZW1hbmRfdXNkX2Jsb2NrY2hhaW4iOjEwLCJzcG90X3VzZF9ibG9ja2NoYWluIjoxMCwia2VlcF9wYXJhbXMiOnRydWV9"
+$CLOREAI_FLEET_TOKEN = ""
 
 # Fixed test machine name -- re-runs update the same slot instead of creating a new one.
 # DELETE this server from clore.ai/my-servers after testing.
