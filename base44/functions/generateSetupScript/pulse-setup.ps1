@@ -8,15 +8,16 @@
              (UPnP port mapping), GPU gaming detection, and auto-start.
 
     Embedded at download time by Pulse's generateSetupScript function:
-      PULSE_USER_TOKEN   — user's session token for Pulse API callback
-      PULSE_APP_ID       — base44 app ID
-      CLOREAI_INIT_TOKEN — Clore.ai server initialization token (per-machine)
+      PULSE_USER_TOKEN    — user's session token for Pulse API callback
+      PULSE_APP_ID        — base44 app ID
+      CLOREAI_FLEET_TOKEN — Clore.ai fleet token (base64 blob from Mass Onboard page,
+                            shared across all machines on the account)
 #>
 
 # ── Embedded by server at download time ──────────────────────────────────────
-$PULSE_USER_TOKEN   = "{{PULSE_USER_TOKEN}}"
-$PULSE_APP_ID       = "{{PULSE_APP_ID}}"
-$CLOREAI_INIT_TOKEN = "{{CLOREAI_INIT_TOKEN}}"
+$PULSE_USER_TOKEN    = "{{PULSE_USER_TOKEN}}"
+$PULSE_APP_ID        = "{{PULSE_APP_ID}}"
+$CLOREAI_FLEET_TOKEN = "{{CLOREAI_FLEET_TOKEN}}"
 $PULSE_API_BASE     = "https://api.base44.app/api/apps/$PULSE_APP_ID/functions"
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -284,7 +285,7 @@ function Invoke-Phase2 {
     Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
     Register-Step "Build tools (gcc, python3-dev)" "wsl -d Ubuntu -- bash -c 'apt-get update && apt-get install -y build-essential python3-dev'"
     Register-Step "Clore.ai host client" "Check gitlab.com/cloreai-public/hosting for install.sh status"
-    Register-Step "Clore.ai init token" "Re-download installer from Pulse dashboard — init token may be single-use"
+    Register-Step "Clore fleet onboarding" "Re-download installer from Pulse dashboard to get a fresh fleet token"
     Register-Step "Clore server ID"
     Register-Step "Windows Firewall rules"
     Register-Step "UPnP port forwarding"
@@ -411,8 +412,8 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     }
 
     # ── Install Clore.ai host client inside WSL2 ─────────────────────────────
-    Write-Log "Installing build tools required by Clore.ai (gcc, python3-dev)..."
-    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -2 && apt-get install -y -qq build-essential python3-dev 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
+    Write-Log "Installing build tools required by Clore.ai (gcc, python3-dev, python3-pip)..."
+    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -2 && apt-get install -y -qq build-essential python3-dev python3-pip 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
     if ($LASTEXITCODE -eq 0) {
         Set-Step "Build tools (gcc, python3-dev)" "PASS"
     } else {
@@ -420,7 +421,7 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     }
 
     Write-Log "Installing Clore.ai host client inside WSL2..."
-    $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh) --init-token $CLOREAI_INIT_TOKEN"
+    $cloreInstall = "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh)"
     $cloreOutput = wsl -d Ubuntu --user root -- bash -c $cloreInstall 2>&1
     $cloreExit = $LASTEXITCODE
     $cloreOutput | ForEach-Object { Write-Log $_ }
@@ -432,26 +433,80 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     Write-Log "Clore.ai install complete" "OK"
     Set-Step "Clore.ai host client" "PASS"
 
-    # Register this machine with Clore.ai using the init token.
-    # install.sh only sets up the Python environment; hosting.py --init-token
-    # is the separate step that contacts Clore's servers and writes /opt/clore-hosting/client/auth.
-    # Without auth the service.sh loop does nothing.
-    Write-Log "Registering machine with Clore.ai init token..."
-    $initOutput = wsl -d Ubuntu --user root -- bash -c "bash /opt/clore-hosting/clore.sh --init-token $CLOREAI_INIT_TOKEN" 2>&1
-    $initExit = $LASTEXITCODE
-    $initOutput | ForEach-Object { Write-Log $_ }
-    if ($initExit -ne 0) {
-        Set-Step "Clore.ai init token" "FAIL" "hosting.py --init-token exited $initExit — token may be single-use or expired"
-        Write-Log "Init token registration failed (exit $initExit). Re-download the installer from the Pulse dashboard to get a fresh token." "ERROR"
+    # ── Decode fleet token and write /opt/clore-hosting/onboarding.json ─────────
+    # The fleet token is a base64-encoded JSON blob from clore.ai Mass Onboard.
+    # clore-onboarding.service reads this file, calls machine_onboarding, gets auth
+    # tokens, writes the auth file, and starts clore-hosting automatically.
+    Write-Log "Decoding Clore fleet token..."
+    try {
+        $ftPad = 4 - ($CLOREAI_FLEET_TOKEN.Length % 4)
+        $ftPadded = if ($ftPad -ne 4) { $CLOREAI_FLEET_TOKEN + ("=" * $ftPad) } else { $CLOREAI_FLEET_TOKEN }
+        $fleetCfg = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ftPadded)) | ConvertFrom-Json
+    } catch {
+        Set-Step "Clore fleet onboarding" "FAIL" "Could not decode fleet token — re-download installer from Pulse dashboard"
+        Write-Log "Fleet token decode failed: $_" "ERROR"
         Show-Diagnostics; Wait-ForKey; exit 1
     }
-    Write-Log "Clore.ai init token accepted — auth file created" "OK"
-    Set-Step "Clore.ai init token" "PASS"
 
-    # Now start the service so it begins serving jobs.
-    Write-Log "Enabling and starting clore-hosting service..."
-    wsl -d Ubuntu --user root -- bash -c "systemctl enable clore-hosting 2>/dev/null; systemctl start clore-hosting 2>/dev/null"
-    Start-Sleep 10
+    $onboardingObj = [ordered]@{ auth = $fleetCfg.auth; mrl = $fleetCfg.mrl }
+    foreach ($k in @("on_demand_bitcoin","on_demand_clore","spot_bitcoin","spot_clore","on_demand_usd_blockchain","spot_usd_blockchain","keep_params")) {
+        if ($null -ne $fleetCfg.$k) { $onboardingObj[$k] = $fleetCfg.$k }
+    }
+    $onboardingJson = ($onboardingObj | ConvertTo-Json -Depth 2) -replace "`r`n", "`n"
+
+    Write-Log "Writing onboarding.json to WSL2..."
+    wsl -d Ubuntu --user root -- bash -c "mkdir -p /opt/clore-hosting"
+    [System.IO.File]::WriteAllText("\\wsl$\Ubuntu\opt\clore-hosting\onboarding.json", $onboardingJson, [System.Text.Encoding]::UTF8)
+    Write-Log "onboarding.json written (mrl=$($fleetCfg.mrl)h)" "OK"
+
+    # ── Install clore-onboarding service ─────────────────────────────────────
+    Write-Log "Installing Clore fleet onboarding service..."
+
+    $onboardingUnit = @"
+[Unit]
+Description=Clore Fleet Onboarding Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/clore-onboarding
+ExecStart=/usr/bin/python3 /opt/clore-onboarding/clore_onboarding.py --mode linux
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"@ -replace "`r`n", "`n"
+
+    [System.IO.File]::WriteAllText("\\wsl$\Ubuntu\etc\systemd\system\clore-onboarding.service", $onboardingUnit, [System.Text.Encoding]::UTF8)
+
+    $setupOnboarding = (@'
+set -e
+pip3 install -q requests 2>&1 | tail -1
+mkdir -p /opt/clore-onboarding
+curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main" -o /opt/clore-onboarding/clore_onboarding.py
+curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main" -o /opt/clore-onboarding/specs.py
+systemctl daemon-reload
+systemctl enable clore-hosting
+systemctl enable clore-onboarding
+systemctl start clore-onboarding
+'@) -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText("\\wsl$\Ubuntu\tmp\setup_onboarding.sh", $setupOnboarding, [System.Text.Encoding]::UTF8)
+    $onboardOutput = wsl -d Ubuntu --user root -- bash /tmp/setup_onboarding.sh 2>&1
+    $onboardExit = $LASTEXITCODE
+    $onboardOutput | ForEach-Object { Write-Log $_ }
+    if ($onboardExit -ne 0) {
+        Set-Step "Clore fleet onboarding" "FAIL" "Service setup exited $onboardExit — see log"
+        Write-Log "Fleet onboarding service setup failed (exit $onboardExit)." "ERROR"
+        Show-Diagnostics; Wait-ForKey; exit 1
+    }
+    Write-Log "Clore fleet onboarding service started" "OK"
+    Set-Step "Clore fleet onboarding" "PASS"
+
+    # Give the onboarding service time to call machine_onboarding and start clore-hosting
+    Write-Log "Waiting for fleet onboarding to register and start clore-hosting..."
+    Start-Sleep 15
 
     # ── Poll for server ID (Clore.ai can take ~2 min to assign) ──────────────
     Write-Log "Waiting for Clore.ai to assign server ID (service is now running)..."
@@ -612,7 +667,7 @@ while ($true) {
         # Mirrored networking: WSL2 IP is stable, no portproxy refresh needed
         @'
 Start-Sleep 15
-wsl -d Ubuntu -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
+wsl -d Ubuntu -- bash -c 'sudo systemctl start clore-onboarding 2>/dev/null; sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
     Add-Content "$env:LOCALAPPDATA\Pulse\autostart.log"
 '@
     } else {
@@ -629,7 +684,7 @@ if (`$wslIP -and `$wslIP -ne `$lastIP) {
     }
     Set-Content -Path `$lastIPFile -Value `$wslIP
 }
-wsl -d Ubuntu -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
+wsl -d Ubuntu -- bash -c 'sudo systemctl start clore-onboarding 2>/dev/null; sudo systemctl start clore-hosting 2>/dev/null' 2>&1 |
     Add-Content "`$env:LOCALAPPDATA\Pulse\autostart.log"
 "@
     }

@@ -8,33 +8,15 @@
  * so the Phase 2 scheduled task survives a reboot.
  *
  * Required env vars:
- *   CLOREAI_API_KEY — Pulse's Clore.ai account API key (used to fetch a fresh
- *                     per-machine init_token from /v1/my_servers at download time)
- *   BASE44_APP_ID   — base44 app ID
+ *   CLOREAI_FLEET_TOKEN — base64 fleet token from clore.ai Mass Onboard page
+ *                         (account-level, shared across all machines)
+ *   BASE44_APP_ID       — base44 app ID
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ── Script templates loaded from sibling .ps1 files ──────────────────────────
 const CLORE_PS1_TEMPLATE = await Deno.readTextFile(new URL('./pulse-setup.ps1', import.meta.url));
 const OCTA_PS1_TEMPLATE  = await Deno.readTextFile(new URL('./pulse-octa-setup.ps1', import.meta.url));
-
-// ── Fetch a fresh Clore.ai init token for a specific user ─────────────────────
-// Each server slot on Clore.ai has a one-time init_token that activates a
-// physical machine. We call /v1/my_servers and pick the first unconnected slot.
-async function fetchCloreInitToken(cloreApiKey: string): Promise<string> {
-  const resp = await fetch('https://api.clore.ai/v1/my_servers', {
-    headers: { 'auth': cloreApiKey },
-  });
-  if (!resp.ok) throw new Error(`Clore.ai API error: ${resp.status}`);
-  const data = await resp.json();
-  const slot = (data.servers ?? []).find((s: any) => !s.connected && s.init_token);
-  if (!slot) {
-    throw new Error(
-      'No available Clore.ai server slots. Go to clore.ai → My Servers → "+ Add my server" to create one, then try again.'
-    );
-  }
-  return slot.init_token as string;
-}
 
 // ── Shared .bat wrapper ───────────────────────────────────────────────────────
 // Extracts the embedded PS1 to %LOCALAPPDATA%\Pulse\ before elevation so the
@@ -111,7 +93,7 @@ Deno.serve(async (req) => {
   }
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const cloreApiKey = Deno.env.get('CLOREAI_API_KEY') ?? '';
+  const cloreFleetToken = Deno.env.get('CLOREAI_FLEET_TOKEN') ?? '';
   const appId = Deno.env.get('BASE44_APP_ID') ?? '';
 
   const body = await req.json().catch(() => ({}));
@@ -128,13 +110,10 @@ Deno.serve(async (req) => {
     .replace('{{PULSE_APP_ID}}', appId);
 
   if (!isOcta) {
-    let cloreInitToken: string;
-    try {
-      cloreInitToken = await fetchCloreInitToken(cloreApiKey);
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 400 });
+    if (!cloreFleetToken) {
+      return Response.json({ error: 'CLOREAI_FLEET_TOKEN env var not set — add the fleet token from clore.ai Mass Onboard to your function secrets.' }, { status: 500 });
     }
-    ps1 = ps1.replace('{{CLOREAI_INIT_TOKEN}}', cloreInitToken);
+    ps1 = ps1.replace('{{CLOREAI_FLEET_TOKEN}}', cloreFleetToken);
   }
 
   // format=ps1 — return the script directly so callers can save it without a
