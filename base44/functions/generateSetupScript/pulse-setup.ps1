@@ -515,10 +515,7 @@ systemctl start clore-onboarding
     Write-Log "Waiting for Clore.ai to assign server ID (service is now running)..."
     $serverId = ""
     for ($i = 1; $i -le 18; $i++) {
-        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "
-for f in /opt/clore-hosting/client/server_id \$(find /opt/clore-hosting/client -name 'server_id' 2>/dev/null | head -1); do
-    [ -f ""\$f"" ] && cat ""\$f"" && break
-done" 2>&1
+        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null || find /opt/clore-hosting/client -name server_id 2>/dev/null | head -1 | xargs -r cat 2>/dev/null" 2>&1
         $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
         if ($candidate) { $serverId = $candidate.Trim(); break }
         Write-Log "  Still waiting... ($($i * 10)s elapsed)"
