@@ -270,7 +270,7 @@ function Invoke-Phase2 {
     $serverId = ""
     for ($i = 1; $i -le 30; $i++) {
         $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null; cat /opt/clore-hosting/server_id 2>/dev/null; find /opt/clore-hosting -name server_id 2>/dev/null | head -3 | xargs -r cat 2>/dev/null" 2>&1
-        $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
+        $candidate = ($raw | Where-Object { $_ -match '^\\s*\\d+\\s*$' }) | Select-Object -First 1
         if ($candidate) { $serverId = $candidate.Trim(); break }
         if ($i % 6 -eq 0) {
             $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1; systemctl is-active clore-onboarding 2>&1" 2>&1
@@ -326,17 +326,17 @@ while ($true) {
         $util = if ($vendor -eq 'NVIDIA') {
             [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null).Trim()
         } else {
-            $s = Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction SilentlyContinue
+            $s = Get-Counter '\\GPU Engine(*engtype_3D)\\Utilization Percentage' -ErrorAction SilentlyContinue
             if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
         }
         if ($util -gt $hi -and -not $paused) {
             wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
             $paused = $true
-            Add-Content "$env:LOCALAPPDATA\Pulse\watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
+            Add-Content "$env:LOCALAPPDATA\\Pulse\\watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
         } elseif ($util -lt $lo -and $paused) {
             wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start clore-hosting 2>/dev/null"
             $paused = $false
-            Add-Content "$env:LOCALAPPDATA\Pulse\watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
+            Add-Content "$env:LOCALAPPDATA\\Pulse\\watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
         }
     } catch {}
     Start-Sleep 30
@@ -354,13 +354,13 @@ while ($true) {
     $autostart = if ($mirroredNetworking) {
 @'
 Start-Sleep 15
-wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "$env:LOCALAPPDATA\Pulse\autostart.log"
+wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "$env:LOCALAPPDATA\\Pulse\\autostart.log"
 '@
     } else {
 @"
 Start-Sleep 15
 \$wslIP = (wsl -d Ubuntu-22.04 --user root -- bash -c 'hostname -I 2>/dev/null').Trim().Split()[0]
-\$lastIPFile = "\$env:LOCALAPPDATA\Pulse\last_wsl_ip"
+\$lastIPFile = "\$env:LOCALAPPDATA\\Pulse\\last_wsl_ip"
 \$lastIP = if (Test-Path \$lastIPFile) { (Get-Content \$lastIPFile).Trim() } else { '' }
 if (\$wslIP -and \$wslIP -ne \$lastIP) {
     (@(22, 8080) + (3000..4000)) | ForEach-Object {
@@ -369,7 +369,7 @@ if (\$wslIP -and \$wslIP -ne \$lastIP) {
     }
     Set-Content -Path \$lastIPFile -Value \$wslIP
 }
-wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "\$env:LOCALAPPDATA\Pulse\autostart.log"
+wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "\$env:LOCALAPPDATA\\Pulse\\autostart.log"
 "@
     }
     $startPath = "$PULSE_DIR\\autostart.ps1"
