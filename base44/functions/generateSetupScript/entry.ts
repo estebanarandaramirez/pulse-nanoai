@@ -561,19 +561,64 @@ Wait-ForKey
 `;
 
 // ── BAT launcher wrapper ──────────────────────────────────────────────────────
-function makeBatLauncher(ps1Filename: string): string {
+function makeSelfExtractingBat(ps1Filename: string, ps1Content: string): string {
+  const marker = '__PULSE_PS1__';
   return `@echo off
-:: PULSE GPU Provider Setup Launcher
-:: This batch file downloads and runs the PowerShell installer.
-:: If Windows blocks it, right-click -> Properties -> Unblock -> OK
+setlocal
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Filename}"
-if errorlevel 1 (
+net session >nul 2>&1
+if %errorlevel% equ 0 goto :elevated
+
+cls
+echo.
+echo   ==========================================
+echo    PULSE GPU Setup
+echo   ==========================================
+echo.
+echo   This installer needs Administrator access.
+echo.
+echo     Step 1 ^| If you see "Windows protected your PC"
+echo              click "More info" then "Run anyway"
+echo.
+echo     Step 2 ^| A UAC popup will appear -- click YES
+echo.
+
+set "VBS=%temp%\\pulse_uac.vbs"
+echo Set sh = CreateObject("Shell.Application") > "%VBS%"
+echo sh.ShellExecute "cmd.exe", "/c " ^& Chr(34) ^& "%~f0" ^& Chr(34), "", "runas", 1 >> "%VBS%"
+cscript //nologo "%VBS%"
+del "%VBS%" >nul 2>&1
+exit /b
+
+:elevated
+cls
+echo.
+echo   PULSE GPU Setup ^| Running as Administrator
+echo.
+
+set "PULSE_DIR=%LOCALAPPDATA%\\Pulse"
+set "PS1_PATH=%PULSE_DIR%\\${ps1Filename}"
+
+if not exist "%PULSE_DIR%" mkdir "%PULSE_DIR%"
+
+echo   Extracting setup script...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=[IO.File]::ReadAllText('%~f0',[Text.Encoding]::UTF8); $m='${marker}'; $i=$c.LastIndexOf($m); if($i-lt 0){exit 1}; [IO.File]::WriteAllText('%PS1_PATH%',$c.Substring($i+$m.Length).TrimStart(),[Text.Encoding]::UTF8)"
+
+if not exist "%PS1_PATH%" (
     echo.
-    echo [ERROR] Setup failed. Check the log at %%LOCALAPPDATA%%\\Pulse\\setup.log
+    echo   ERROR: Could not extract setup script. Re-download from the Pulse dashboard.
+    echo.
     pause
+    exit /b 1
 )
-`;
+
+echo   Launching installer...
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File "%PS1_PATH%"
+goto :eof
+
+${marker}
+${ps1Content}`;
 }
 
 // ── Inject placeholders ───────────────────────────────────────────────────────
@@ -629,8 +674,8 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Default: return .bat launcher
-  const batContent = makeBatLauncher(ps1Filename);
+  // Default: return self-extracting .bat with PS1 embedded after __PULSE_PS1__ marker
+  const batContent = makeSelfExtractingBat(ps1Filename, ps1Source);
   return new Response(batContent, {
     headers: {
       'Content-Type': 'application/octet-stream',
