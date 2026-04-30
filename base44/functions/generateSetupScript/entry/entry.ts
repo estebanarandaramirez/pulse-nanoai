@@ -90,8 +90,14 @@ function Wait-ForKey {
 }
 
 function Get-LocalIP {
+    # Use the interface that actually has a default gateway (i.e. internet-facing adapter)
+    $cfg = Get-NetIPConfiguration |
+        Where-Object { $_.IPv4DefaultGateway -ne $null -and $_.NetAdapter.Status -eq "Up" } |
+        Select-Object -First 1
+    if ($cfg) { return $cfg.IPv4Address.IPAddress }
+    # Fallback: first non-loopback/WSL/vEthernet address
     (Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object { $_.InterfaceAlias -notmatch "Loopback|WSL|vEthernet" } |
+        Where-Object { $_.InterfaceAlias -notmatch "Loopback|WSL|vEthernet" -and $_.IPAddress -notmatch "^169\\.254\\." } |
         Select-Object -First 1).IPAddress
 }
 
@@ -259,7 +265,10 @@ function Invoke-Phase2 {
     Write-Log "onboarding.json written" "OK"
 
     # Install clore-onboarding service
-    $setupOnboarding = "pip3 install -q requests 2>&1 | tail -1; mkdir -p /opt/clore-onboarding; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main' -o /opt/clore-onboarding/clore_onboarding.py || { echo 'ERROR: clore_onboarding.py download failed'; exit 1; }; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main' -o /opt/clore-onboarding/specs.py || { echo 'ERROR: specs.py download failed'; exit 1; }; systemctl daemon-reload; systemctl enable clore-hosting; systemctl enable clore-onboarding; echo 'Starting clore-onboarding...'; systemctl start clore-onboarding; echo 'Waiting 75s for onboarding to register...'; sleep 75; echo 'Starting clore-hosting...'; systemctl start clore-hosting || true"
+    # Fix: nvidia-smi lives in /usr/lib/wsl/lib/ which is NOT in systemd service PATH,
+    # so clore_onboarding.py (which calls nvidia-smi to detect GPU) always crashed.
+    # Symlinking into /usr/local/bin/ makes it accessible to all services.
+    $setupOnboarding = "NV=\$(which nvidia-smi 2>/dev/null); [ -z \"\$NV\" ] && NV=/usr/lib/wsl/lib/nvidia-smi; [ -f \"\$NV\" ] && ln -sf \"\$NV\" /usr/local/bin/nvidia-smi && echo 'nvidia-smi symlinked OK' || echo 'WARNING: nvidia-smi not found at expected path'; pip3 install -q requests 2>&1 | tail -1; mkdir -p /opt/clore-onboarding; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main' -o /opt/clore-onboarding/clore_onboarding.py || { echo 'ERROR: clore_onboarding.py download failed'; exit 1; }; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main' -o /opt/clore-onboarding/specs.py || { echo 'ERROR: specs.py download failed'; exit 1; }; systemctl daemon-reload; systemctl enable clore-hosting; systemctl enable clore-onboarding; echo 'Starting clore-onboarding...'; systemctl start clore-onboarding; echo 'Waiting 75s for onboarding to register...'; sleep 75; echo 'Starting clore-hosting...'; systemctl start clore-hosting || true"
     $setupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($setupOnboarding))
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d | bash"
     Write-Log "Clore fleet onboarding service started" "OK"
@@ -283,23 +292,35 @@ function Invoke-Phase2 {
     else { Write-Log "Server ID not yet assigned — check dashboard in ~5 min" "WARN" }
 
     Write-Log "Adding Windows Firewall rules..."
-    $allPorts = $CLORE_MGMT_PORTS + ($CLORE_APP_PORT_START..$CLORE_APP_PORT_END)
-    foreach ($port in $allPorts) {
-        New-NetFirewallRule -DisplayName "Pulse-Clore-TCP-$port" -Direction Inbound \`
-            -Protocol TCP -LocalPort $port -Action Allow -ErrorAction SilentlyContinue | Out-Null
-    }
+    Remove-NetFirewallRule -DisplayName "Pulse-Clore-*" -ErrorAction SilentlyContinue
+    New-NetFirewallRule -DisplayName "Pulse-Clore-Mgmt" -Direction Inbound \`
+        -Protocol TCP -LocalPort @(22, 8080) -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    New-NetFirewallRule -DisplayName "Pulse-Clore-Apps" -Direction Inbound \`
+        -Protocol TCP -LocalPort "3000-4000" -Action Allow -ErrorAction SilentlyContinue | Out-Null
     Write-Log "Firewall rules added" "OK"
 
     $localIP = Get-LocalIP
+    if (-not $localIP -or $localIP -match "^169\\.254\\.") {
+        Write-Log "Could not detect a valid LAN IP (got: $localIP). Run 'ipconfig' to find your IP." "WARN"
+        $localIP = Read-Host "  Enter your PC's LAN IP (e.g. 192.168.1.50)"
+    }
+    $upnpPorts = $CLORE_MGMT_PORTS + ($CLORE_APP_PORT_START..$CLORE_APP_PORT_END)
     try {
         $upnp = New-Object -ComObject HNetCfg.NATUPnP
         $mappings = $upnp.StaticPortMappingCollection
-        foreach ($port in $allPorts) { $mappings.Add($port, "TCP", $port, $localIP, $true, "Pulse-Clore-$port") | Out-Null }
+        foreach ($port in $upnpPorts) { $mappings.Add($port, "TCP", $port, $localIP, $true, "Pulse-Clore-$port") | Out-Null }
         Write-Log "UPnP port forwarding succeeded → $localIP" "OK"
     } catch {
-        Write-Log "UPnP unavailable — manual router port forwarding required (TCP 22, 8080, 3000-4000 → $localIP)" "WARN"
-        Write-Host "  Open your router admin (usually http://192.168.1.1) and forward TCP 22, 8080, 3000-4000 → $localIP" -ForegroundColor Yellow
-        Read-Host "  Press Enter when done (or skip and do it later)"
+        Write-Log "UPnP unavailable — you MUST manually forward ports on your router" "WARN"
+        Write-Host "" -ForegroundColor Yellow
+        Write-Host "  !! ACTION REQUIRED — Router port forwarding !!" -ForegroundColor Red
+        Write-Host "  Your PC's LAN IP: $localIP" -ForegroundColor Yellow
+        Write-Host "  Forward these TCP ports → $localIP :" -ForegroundColor Yellow
+        Write-Host "    22, 8080, 3000-4000" -ForegroundColor White
+        Write-Host "  Open your router admin (usually http://192.168.1.1)" -ForegroundColor Yellow
+        Write-Host "  Without this Clore.ai CANNOT connect to your machine." -ForegroundColor Red
+        Write-Host ""
+        Read-Host "  Press Enter once done (or skip — Clore.ai won't assign a server ID without it)"
     }
 
     if (-not $mirroredNetworking) {
