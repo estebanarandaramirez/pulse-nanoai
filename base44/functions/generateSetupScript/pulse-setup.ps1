@@ -484,15 +484,21 @@ WantedBy=multi-user.target
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$unitB64' | base64 -d > /etc/systemd/system/clore-onboarding.service"
 
     $setupOnboarding = (@'
-set -e
 pip3 install -q requests 2>&1 | tail -1
 mkdir -p /opt/clore-onboarding
-curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main" -o /opt/clore-onboarding/clore_onboarding.py
-curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main" -o /opt/clore-onboarding/specs.py
+curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main" -o /opt/clore-onboarding/clore_onboarding.py || { echo "ERROR: clore_onboarding.py download failed"; exit 1; }
+curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main" -o /opt/clore-onboarding/specs.py || { echo "ERROR: specs.py download failed"; exit 1; }
 systemctl daemon-reload
 systemctl enable clore-hosting
 systemctl enable clore-onboarding
+echo "Starting clore-onboarding — registering machine with Clore.ai..."
 systemctl start clore-onboarding
+echo "Waiting 75s for onboarding to write auth config..."
+sleep 75
+echo "Starting clore-hosting..."
+systemctl start clore-hosting || true
+echo "onboarding=$(systemctl is-active clore-onboarding 2>&1)"
+echo "hosting=$(systemctl is-active clore-hosting 2>&1)"
 '@) -replace "`r`n", "`n"
     $setupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($setupOnboarding))
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d > /tmp/setup_onboarding.sh"
@@ -507,17 +513,23 @@ systemctl start clore-onboarding
     Write-Log "Clore fleet onboarding service started" "OK"
     Set-Step "Clore fleet onboarding" "PASS"
 
-    # Give the onboarding service time to call machine_onboarding and start clore-hosting
-    Write-Log "Waiting for fleet onboarding to register and start clore-hosting..."
-    Start-Sleep 15
+    # The bash onboarding script already waited 75s for registration — just let logs settle
+    Write-Log "Checking service status after onboarding..."
+    Start-Sleep 5
 
-    # ── Poll for server ID (Clore.ai can take ~2 min to assign) ──────────────
-    Write-Log "Waiting for Clore.ai to assign server ID (service is now running)..."
+    # ── Poll for server ID — Clore.ai takes 2-5 min to assign after first connect ────
+    Write-Log "Waiting for Clore.ai to assign server ID (up to 5 min)..."
     $serverId = ""
-    for ($i = 1; $i -le 18; $i++) {
-        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null || find /opt/clore-hosting/client -name server_id 2>/dev/null | head -1 | xargs -r cat 2>/dev/null" 2>&1
+    for ($i = 1; $i -le 30; $i++) {
+        # Search all likely locations — install.sh may use different subdirs
+        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null; cat /opt/clore-hosting/server_id 2>/dev/null; find /opt/clore-hosting -name server_id 2>/dev/null | head -3 | xargs -r cat 2>/dev/null" 2>&1
         $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
         if ($candidate) { $serverId = $candidate.Trim(); break }
+        # Every 60s log service health to aid debugging
+        if ($i % 6 -eq 0) {
+            $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "echo hosting=`$(systemctl is-active clore-hosting 2>&1); echo onboarding=`$(systemctl is-active clore-onboarding 2>&1); journalctl -u clore-hosting --no-pager -n 3 2>/dev/null | tail -3" 2>&1
+            Write-Log "  Status: $($stat -join ' | ')"
+        }
         Write-Log "  Still waiting... ($($i * 10)s elapsed)"
         Start-Sleep 10
     }
@@ -525,7 +537,10 @@ systemctl start clore-onboarding
         Write-Log "Clore.ai Server ID: $serverId" "OK"
         Set-Step "Clore server ID" "PASS" "ID: $serverId"
     } else {
-        Write-Log "Server ID not yet assigned after 3 min — service is running; ID should appear in the Pulse dashboard within ~5 min" "WARN"
+        # Capture final service state for log
+        $finalStat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl status clore-hosting --no-pager -l 2>&1 | head -15; echo '---'; systemctl status clore-onboarding --no-pager -l 2>&1 | head -15" 2>&1
+        $finalStat | ForEach-Object { Write-Log $_ }
+        Write-Log "Server ID not yet assigned after 5 min — services running; ID will appear in Pulse dashboard once Clore.ai confirms registration" "WARN"
         Set-Step "Clore server ID" "WARN" "Not yet assigned — service running, check dashboard in ~5 min"
         $serverId = ""
     }
