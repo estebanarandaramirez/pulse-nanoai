@@ -297,8 +297,8 @@ function Invoke-Phase2 {
     try {
         $mktResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/marketplace" \`
             -Headers @{ "auth" = $cloreAuth } -Method GET -ErrorAction Stop
-        $gpuTag = if ($gpuName -match "RTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
-                  elseif ($gpuName -match "GTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
+        $gpuTag = if ($gpuName -match "RTX\\s*(\\d+\\s*Ti?)") { $Matches[0].Trim() } \`
+                  elseif ($gpuName -match "GTX\\s*(\\d+\\s*Ti?)") { $Matches[0].Trim() } \`
                   else { ($gpuName -split " " | Select-Object -Last 1) }
         $gpuListings = @($mktResp.servers | Where-Object {
             ($_.gpu_array -join " ") -match [regex]::Escape($gpuTag)
