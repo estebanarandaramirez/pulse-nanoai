@@ -1,5 +1,5 @@
 /**
- * generateSetupScript
+ * generateSetupScript v2
  * Returns a platform-specific PowerShell installer (.ps1 or .bat wrapper)
  * with the user's session token, app ID, and Clore fleet token embedded.
  *
