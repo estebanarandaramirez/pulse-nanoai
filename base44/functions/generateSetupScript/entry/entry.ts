@@ -268,7 +268,7 @@ function Invoke-Phase2 {
     # Fix: nvidia-smi lives in /usr/lib/wsl/lib/ which is NOT in systemd service PATH,
     # so clore_onboarding.py (which calls nvidia-smi to detect GPU) always crashed.
     # Symlinking into /usr/local/bin/ makes it accessible to all services.
-    $setupOnboarding = "NV=\$(which nvidia-smi 2>/dev/null); [ -z \"\$NV\" ] && NV=/usr/lib/wsl/lib/nvidia-smi; [ -f \"\$NV\" ] && ln -sf \"\$NV\" /usr/local/bin/nvidia-smi && echo 'nvidia-smi symlinked OK' || echo 'WARNING: nvidia-smi not found at expected path'; pip3 install -q requests 2>&1 | tail -1; mkdir -p /opt/clore-onboarding; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main' -o /opt/clore-onboarding/clore_onboarding.py || { echo 'ERROR: clore_onboarding.py download failed'; exit 1; }; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main' -o /opt/clore-onboarding/specs.py || { echo 'ERROR: specs.py download failed'; exit 1; }; systemctl daemon-reload; systemctl enable clore-hosting; systemctl enable clore-onboarding; echo 'Starting clore-onboarding...'; systemctl start clore-onboarding; echo 'Waiting 75s for onboarding to register...'; sleep 75; echo 'Starting clore-hosting...'; systemctl start clore-hosting || true"
+    $setupOnboarding = "NV=\$(which nvidia-smi 2>/dev/null); [ -z \"\$NV\" ] && NV=/usr/lib/wsl/lib/nvidia-smi; [ -f \"\$NV\" ] && ln -sf \"\$NV\" /usr/local/bin/nvidia-smi && echo 'nvidia-smi symlinked OK' || echo 'WARNING: nvidia-smi not found at expected path'; pip3 install -q requests 2>&1 | tail -1; mkdir -p /opt/clore-onboarding; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main' -o /opt/clore-onboarding/clore_onboarding.py || { echo 'ERROR: clore_onboarding.py download failed'; exit 1; }; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main' -o /opt/clore-onboarding/specs.py || { echo 'ERROR: specs.py download failed'; exit 1; }; printf '[Unit]\nDescription=Clore Fleet Onboarding Service\n\n[Service]\nType=simple\nWorkingDirectory=/opt/clore-onboarding\nExecStart=/usr/bin/python3 /opt/clore-onboarding/clore_onboarding.py --mode linux\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/clore-onboarding.service; update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true; update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true; echo IyEvYmluL3NoCkE9IiQqIgpjYXNlICIkQSIgaW4KICAqRk9SV0FSRCpici0qfCpici0qRk9SV0FSRCopCiAgICBleGl0IDAKICAgIDs7CmVzYWMKZXhlYyAvdXNyL3NiaW4vaXB0YWJsZXMtbGVnYWN5ICIkQCIK | base64 -d > /usr/local/sbin/iptables-wrapper; chmod +x /usr/local/sbin/iptables-wrapper; update-alternatives --install /usr/sbin/iptables iptables /usr/local/sbin/iptables-wrapper 200 2>/dev/null || true; update-alternatives --set iptables /usr/local/sbin/iptables-wrapper 2>/dev/null || true; echo eyJpcHRhYmxlcyI6ZmFsc2UsInJ1bnRpbWVzIjp7Im52aWRpYSI6eyJwYXRoIjoibnZpZGlhLWNvbnRhaW5lci1ydW50aW1lIiwicnVudGltZUFyZ3MiOltdfX19 | base64 -d > /etc/docker/daemon.json; echo br_netfilter > /etc/modules-load.d/clore.conf; modprobe br_netfilter 2>/dev/null || true; systemctl restart docker 2>/dev/null || true; systemctl daemon-reload; systemctl enable clore-hosting; systemctl enable clore-onboarding; echo 'Starting clore-onboarding...'; systemctl start clore-onboarding; echo 'Waiting 75s for onboarding to register...'; sleep 75; echo 'Starting clore-hosting...'; systemctl start clore-hosting || true"
     $setupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($setupOnboarding))
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d | bash"
     Write-Log "Clore fleet onboarding service started" "OK"
@@ -290,6 +290,43 @@ function Invoke-Phase2 {
     }
     if ($serverId) { Write-Log "Clore.ai Server ID: $serverId" "OK" }
     else { Write-Log "Server ID not yet assigned — check dashboard in ~5 min" "WARN" }
+
+    # Set competitive pricing — fetch market rate for our GPU, set 5% below average
+    Write-Log "Setting competitive pricing..."
+    $cloreAuth = $fleetCfg.auth
+    try {
+        $mktResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/marketplace" \`
+            -Headers @{ "auth" = $cloreAuth } -Method GET -ErrorAction Stop
+        $gpuTag = if ($gpuName -match "RTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
+                  elseif ($gpuName -match "GTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
+                  else { ($gpuName -split " " | Select-Object -Last 1) }
+        $gpuListings = @($mktResp.servers | Where-Object {
+            ($_.gpu_array -join " ") -match [regex]::Escape($gpuTag)
+        })
+        $targetDay = 0.08  # USD/day fallback
+        if ($gpuListings.Count -gt 0) {
+            $hrs = $gpuListings | ForEach-Object {
+                $p = $_.price.usd.on_demand_usd; if ($p) { [float]$p }
+            } | Where-Object { $_ -gt 0 }
+            if ($hrs) {
+                $avgHr = ($hrs | Measure-Object -Average).Average
+                $targetDay = [math]::Round($avgHr * 24 * 0.95, 4)
+            }
+        }
+        $spotDay = [math]::Round($targetDay * 0.8, 4)
+        $idNum = if ($serverId) { [int]$serverId } else { 0 }
+        $priceBody = @{ id = $idNum; name = "Pulse-$idNum"; availability = $true; mrl = 96; on_demand = $targetDay; spot = $spotDay } | ConvertTo-Json
+        $priceResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/set_server_settings" \`
+            -Method POST -Headers @{ "auth" = $cloreAuth; "Content-Type" = "application/json" } \`
+            -Body $priceBody -ErrorAction Stop
+        if ($priceResp.code -eq 0) {
+            Write-Log "Pricing set — on-demand: \`$$targetDay/day | spot: \`$$spotDay/day" "OK"
+        } else {
+            Write-Log "Pricing API returned code $($priceResp.code) — set manually in Clore dashboard" "WARN"
+        }
+    } catch {
+        Write-Log "Auto-pricing skipped (set manually in Clore dashboard): $_" "WARN"
+    }
 
     Write-Log "Adding Windows Firewall rules..."
     Remove-NetFirewallRule -DisplayName "Pulse-Clore-*" -ErrorAction SilentlyContinue
