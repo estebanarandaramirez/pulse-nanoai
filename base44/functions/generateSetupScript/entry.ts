@@ -271,14 +271,19 @@ function Invoke-Phase2 {
     wsl -d Ubuntu-22.04 --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -1 && apt-get install -y -qq build-essential python3-dev python3-pip 2>&1 | tail -2" 2>&1 | ForEach-Object { Write-Log $_ }
 
     Write-Log "Installing Clore.ai host client..."
-    $cloreOutput = wsl -d Ubuntu-22.04 --user root -- bash -c "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh)" 2>&1
-    $cloreExit = $LASTEXITCODE
-    $cloreOutput | ForEach-Object { Write-Log $_ }
-    if ($cloreExit -ne 0) {
-        Write-Log "Clore.ai installation failed (exit $cloreExit)." "ERROR"
-        Wait-ForKey; exit 1
+    $cloreAlready = (wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>/dev/null" 2>&1 | Out-String) -match "active"
+    if ($cloreAlready) {
+        Write-Log "Clore.ai host client already installed and running" "OK"
+    } else {
+        $cloreOutput = wsl -d Ubuntu-22.04 --user root -- bash -c "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh)" 2>&1
+        $cloreExit = $LASTEXITCODE
+        $cloreOutput | ForEach-Object { Write-Log $_ }
+        if ($cloreExit -ne 0) {
+            Write-Log "Clore.ai installation failed (exit $cloreExit)." "ERROR"
+            Wait-ForKey; exit 1
+        }
+        Write-Log "Clore.ai install complete" "OK"
     }
-    Write-Log "Clore.ai install complete" "OK"
 
     # Decode fleet token and write onboarding.json
     Write-Log "Decoding Clore fleet token..."
@@ -296,9 +301,9 @@ function Invoke-Phase2 {
         if ($null -ne $fleetCfg.$k) { $onboardingObj[$k] = $fleetCfg.$k }
     }
     $onboardingJson = ($onboardingObj | ConvertTo-Json -Depth 2) -replace "\`r\`n", "\`n"
-    wsl -d Ubuntu-22.04 --user root -- bash -c "mkdir -p /opt/clore-hosting"
+    wsl -d Ubuntu-22.04 --user root -- bash -c "mkdir -p /opt/clore-hosting /opt/clore-onboarding"
     $onboardingB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($onboardingJson))
-    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$onboardingB64' | base64 -d > /opt/clore-hosting/onboarding.json"
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$onboardingB64' | base64 -d | tee /opt/clore-hosting/onboarding.json /opt/clore-onboarding/onboarding.json > /dev/null"
     Write-Log "onboarding.json written" "OK"
 
     # Install clore-onboarding service
