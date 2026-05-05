@@ -185,7 +185,7 @@ function Invoke-Phase2 {
     # Read the registry directly instead; distro names are plain ASCII there.
     function Test-Ubuntu {
         try {
-            return [bool](Get-ChildItem "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss" -ErrorAction Stop |
+            return [bool](Get-ChildItem "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Lxss" -ErrorAction Stop |
                 ForEach-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DistributionName } |
                 Where-Object { $_ -eq "Ubuntu-22.04" })
         } catch { return $false }
