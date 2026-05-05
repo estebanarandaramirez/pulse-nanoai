@@ -50,7 +50,7 @@ $CLORE_APP_PORT_END   = 4000
 function Write-Log {
     param([string]$msg, [string]$level = "INFO")
     $ts = Get-Date -Format "HH:mm:ss"
-    Add-Content -Path $LOG_FILE -Value "[$ts][$level] $msg" -Encoding UTF8
+    Add-Content -Path $LOG_FILE -Value "[$ts][$level] $msg" -Encoding UTF8 -ErrorAction SilentlyContinue
     switch ($level) {
         "OK"    { Write-Host "  [OK] $msg" -ForegroundColor Green }
         "WARN"  { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
@@ -184,12 +184,24 @@ function Invoke-Phase2 {
     $distros = wsl --list --quiet 2>&1
     if ($distros -notmatch "Ubuntu-22.04") {
         Write-Log "Downloading Ubuntu 22.04..."
-        wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-Null
-        wsl -d Ubuntu-22.04 --user root -- bash -c "echo initialized" 2>&1 | Out-Null
-        $check = wsl -d Ubuntu-22.04 -- echo "ok" 2>&1
+        wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | ForEach-Object { Write-Log $_ }
+        Start-Sleep 5
+
+        # Verify the distro actually registered — some machines need a direct launch first
+        $check = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
         if ($check -notmatch "ok") {
             Write-Host "  Ubuntu needs one-time setup. Create a Linux user in the new window, then close it." -ForegroundColor Yellow
             Start-Process wsl.exe -ArgumentList "-d Ubuntu-22.04" -Wait
+            Start-Sleep 5
+            $check2 = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
+            if ($check2 -notmatch "ok") {
+                Write-Log "Ubuntu 22.04 did not initialize correctly." "ERROR"
+                Write-Host ""
+                Write-Host "  ACTION REQUIRED: Install Ubuntu 22.04 manually from the Microsoft Store," -ForegroundColor Yellow
+                Write-Host "  complete the setup (create a Linux user), then re-run this installer." -ForegroundColor Yellow
+                Write-Host ""
+                Wait-ForKey; exit 1
+            }
         }
         Write-Log "Ubuntu 22.04 installed" "OK"
     } else {
@@ -520,7 +532,7 @@ $LOG_FILE  = "$PULSE_DIR\\octa-setup.log"
 function Write-Log {
     param([string]$msg, [string]$level = "INFO")
     $ts = Get-Date -Format "HH:mm:ss"
-    Add-Content -Path $LOG_FILE -Value "[$ts][$level] $msg" -Encoding UTF8
+    Add-Content -Path $LOG_FILE -Value "[$ts][$level] $msg" -Encoding UTF8 -ErrorAction SilentlyContinue
     switch ($level) {
         "OK"    { Write-Host "  [OK] $msg" -ForegroundColor Green }
         "WARN"  { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
