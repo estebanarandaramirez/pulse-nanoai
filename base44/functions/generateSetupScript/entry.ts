@@ -181,8 +181,15 @@ function Invoke-Phase1 {
 function Invoke-Phase2 {
     Show-Banner "Phase 2 of 2 — Installing Clore.ai Provider Stack"
 
-    # wsl --list outputs UTF-16; pipe through Out-String for reliable matching in PS 5.1
-    function Test-Ubuntu { (wsl --list --quiet 2>&1 | Out-String) -match "Ubuntu-22.04" }
+    # wsl --list outputs UTF-16 with null bytes — regex never matches even with Out-String.
+    # Read the registry directly instead; distro names are plain ASCII there.
+    function Test-Ubuntu {
+        try {
+            return [bool](Get-ChildItem "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss" -ErrorAction Stop |
+                ForEach-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DistributionName } |
+                Where-Object { $_ -eq "Ubuntu-22.04" })
+        } catch { return $false }
+    }
 
     if (-not (Test-Ubuntu)) {
         Write-Log "Installing Ubuntu 22.04..."
