@@ -317,59 +317,17 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d | bash"
     Write-Log "Clore fleet onboarding service started" "OK"
 
-    Start-Sleep 5
-
-    Write-Log "Waiting for Clore.ai server ID (up to 5 min)..."
+    Write-Log "Waiting for Clore.ai services to start (up to 3 min)..."
     $serverId = ""
-    for ($i = 1; $i -le 30; $i++) {
-        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null; cat /opt/clore-hosting/server_id 2>/dev/null; find /opt/clore-hosting -name server_id 2>/dev/null | head -3 | xargs -r cat 2>/dev/null" 2>&1
-        $candidate = ($raw | Where-Object { $_ -match '^\\s*\\d+\\s*$' }) | Select-Object -First 1
-        if ($candidate) { $serverId = $candidate.Trim(); break }
-        if ($i % 6 -eq 0) {
+    for ($i = 1; $i -le 18; $i++) {
+        $svcOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>/dev/null && systemctl is-active clore-onboarding 2>/dev/null && echo both_ok" 2>&1 | Out-String) -match "both_ok"
+        if ($svcOk) { Write-Log "Clore.ai services running" "OK"; break }
+        if ($i % 3 -eq 0) {
             $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1; systemctl is-active clore-onboarding 2>&1" 2>&1
             Write-Log "  Service status: $($stat -join ' / ')"
         }
-        Write-Log "  Still waiting... ($($i * 10)s)"
+        Write-Log "  Waiting for services... ($($i * 10)s)"
         Start-Sleep 10
-    }
-    if ($serverId) { Write-Log "Clore.ai Server ID: $serverId" "OK" }
-    else { Write-Log "Server ID not yet assigned — check dashboard in ~5 min" "WARN" }
-
-    # Set competitive pricing — fetch market rate for our GPU, set 5% below average
-    Write-Log "Setting competitive pricing..."
-    $cloreAuth = $fleetCfg.auth
-    try {
-        $mktResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/marketplace" \`
-            -Headers @{ "auth" = $cloreAuth } -Method GET -ErrorAction Stop
-        $gpuTag = if ($gpuName -match "RTX\\s*(\\d+\\s*Ti?)") { $Matches[0].Trim() } \`
-                  elseif ($gpuName -match "GTX\\s*(\\d+\\s*Ti?)") { $Matches[0].Trim() } \`
-                  else { ($gpuName -split " " | Select-Object -Last 1) }
-        $gpuListings = @($mktResp.servers | Where-Object {
-            ($_.gpu_array -join " ") -match [regex]::Escape($gpuTag)
-        })
-        $targetDay = 0.08  # USD/day fallback
-        if ($gpuListings.Count -gt 0) {
-            $hrs = $gpuListings | ForEach-Object {
-                $p = $_.price.usd.on_demand_usd; if ($p) { [float]$p }
-            } | Where-Object { $_ -gt 0 }
-            if ($hrs) {
-                $avgHr = ($hrs | Measure-Object -Average).Average
-                $targetDay = [math]::Round($avgHr * 24 * 0.95, 4)
-            }
-        }
-        $spotDay = [math]::Round($targetDay * 0.8, 4)
-        $idNum = if ($serverId) { [int]$serverId } else { 0 }
-        $priceBody = @{ id = $idNum; name = "Pulse-$idNum"; availability = $true; mrl = 96; on_demand = $targetDay; spot = $spotDay } | ConvertTo-Json
-        $priceResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/set_server_settings" \`
-            -Method POST -Headers @{ "auth" = $cloreAuth; "Content-Type" = "application/json" } \`
-            -Body $priceBody -ErrorAction Stop
-        if ($priceResp.code -eq 0) {
-            Write-Log "Pricing set — on-demand: \`$$targetDay/day | spot: \`$$spotDay/day" "OK"
-        } else {
-            Write-Log "Pricing API returned code $($priceResp.code) — set manually in Clore dashboard" "WARN"
-        }
-    } catch {
-        Write-Log "Auto-pricing skipped (set manually in Clore dashboard): $_" "WARN"
     }
 
     Write-Log "Adding Windows Firewall rules..."
