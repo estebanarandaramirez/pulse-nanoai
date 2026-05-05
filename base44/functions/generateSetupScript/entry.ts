@@ -181,32 +181,50 @@ function Invoke-Phase1 {
 function Invoke-Phase2 {
     Show-Banner "Phase 2 of 2 — Installing Clore.ai Provider Stack"
 
-    $distros = wsl --list --quiet 2>&1
-    if ($distros -notmatch "Ubuntu-22.04") {
-        Write-Log "Downloading Ubuntu 22.04..."
-        wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | ForEach-Object { Write-Log $_ }
-        Start-Sleep 5
+    # wsl --list outputs UTF-16; pipe through Out-String for reliable matching in PS 5.1
+    function Test-Ubuntu { (wsl --list --quiet 2>&1 | Out-String) -match "Ubuntu-22.04" }
 
-        # Verify the distro actually registered — some machines need a direct launch first
-        $check = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
-        if ($check -notmatch "ok") {
-            Write-Host "  Ubuntu needs one-time setup. Create a Linux user in the new window, then close it." -ForegroundColor Yellow
-            Start-Process wsl.exe -ArgumentList "-d Ubuntu-22.04" -Wait
+    if (-not (Test-Ubuntu)) {
+        Write-Log "Installing Ubuntu 22.04..."
+        wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | ForEach-Object { Write-Log $_ }
+
+        # Wait up to 30s for the distro to appear (registration can be slow)
+        $registered = $false
+        for ($t = 1; $t -le 6; $t++) {
             Start-Sleep 5
-            $check2 = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
-            if ($check2 -notmatch "ok") {
-                Write-Log "Ubuntu 22.04 did not initialize correctly." "ERROR"
-                Write-Host ""
-                Write-Host "  ACTION REQUIRED: Install Ubuntu 22.04 manually from the Microsoft Store," -ForegroundColor Yellow
-                Write-Host "  complete the setup (create a Linux user), then re-run this installer." -ForegroundColor Yellow
-                Write-Host ""
-                Wait-ForKey; exit 1
-            }
+            if (Test-Ubuntu) { $registered = $true; break }
+            Write-Log "  Waiting for Ubuntu registration... ($($t * 5)s)"
         }
-        Write-Log "Ubuntu 22.04 installed" "OK"
+
+        if (-not $registered) {
+            Write-Log "First install attempt did not register distro. Retrying..." "WARN"
+            Write-Host "  If an Ubuntu window appears, create any username/password, then close it." -ForegroundColor Yellow
+            wsl --install -d Ubuntu-22.04 2>&1 | ForEach-Object { Write-Log $_ }
+            Start-Sleep 15
+            $registered = Test-Ubuntu
+        }
+
+        if (-not $registered) {
+            Write-Log "Ubuntu 22.04 installation failed — install it from the Microsoft Store, complete setup, then re-run." "ERROR"
+            Wait-ForKey; exit 1
+        }
     } else {
         Write-Log "Ubuntu 22.04 already present" "OK"
     }
+
+    # Verify root access works (first launch may need OOBE on some machines)
+    $rootOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-String) -match "ok"
+    if (-not $rootOk) {
+        Write-Host "  Ubuntu needs first-time user setup. Create a username/password, then close the window." -ForegroundColor Yellow
+        Start-Process wsl.exe -ArgumentList "-d Ubuntu-22.04" -Wait
+        Start-Sleep 5
+        $rootOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-String) -match "ok"
+        if (-not $rootOk) {
+            Write-Log "Cannot access Ubuntu 22.04 as root after setup — re-run installer." "ERROR"
+            Wait-ForKey; exit 1
+        }
+    }
+    Write-Log "Ubuntu 22.04 ready" "OK"
 
     wsl -d Ubuntu-22.04 --user root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null || printf '[boot]\nsystemd=true\n' > /etc/wsl.conf"
 
