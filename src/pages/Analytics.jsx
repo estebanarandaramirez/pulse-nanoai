@@ -1,126 +1,209 @@
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { useState, useEffect } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import StatCard from "../components/shared/StatCard";
-import { TrendingUp, DollarSign, Cpu, Coins } from "lucide-react";
+import { TrendingUp, DollarSign, Cpu, Coins, RefreshCw } from "lucide-react";
 import SectionTitle from "../components/shared/SectionTitle";
-
-const MONTHLY = [
-  { month: "Oct", revenue: 28400, pls: 284000, gpus: 320 },
-  { month: "Nov", revenue: 34200, pls: 342000, gpus: 380 },
-  { month: "Dec", revenue: 41800, pls: 418000, gpus: 430 },
-  { month: "Jan", revenue: 38900, pls: 389000, gpus: 410 },
-  { month: "Feb", revenue: 44200, pls: 442000, gpus: 460 },
-  { month: "Mar", revenue: 47800, pls: 478000, gpus: 490 },
-  { month: "Apr", revenue: 46800, pls: 468000, gpus: 500 },
-];
-
-const PLATFORM_SPLIT = [
-  { platform: "Clore.ai",   revenue: 46800, pct: 100, color: "bg-cyan" },
-  { platform: "OctaSpace",  revenue: 0,     pct: 0,   color: "bg-purple" },
-];
+import { base44 } from "@/api/base44Client";
 
 const CTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-card border border-border rounded-md px-3 py-2 text-[10px] font-mono space-y-1">
       <div className="text-muted-foreground">{label}</div>
-      {payload.map(p => <div key={p.name} style={{ color: p.color }}>{p.name}: {p.value?.toLocaleString()}</div>)}
+      {payload.map(p => <div key={p.name} style={{ color: p.color }}>{p.name}: {p.value}</div>)}
     </div>
   );
 };
 
 export default function Analytics() {
-  const totalRevenue = MONTHLY.reduce((s, m) => s + m.revenue, 0);
-  const avgGPUs = Math.round(MONTHLY.reduce((s, m) => s + m.gpus, 0) / MONTHLY.length);
-  const totalPLS = MONTHLY.reduce((s, m) => s + m.pls, 0);
+  const [clore, setClore] = useState(null);
+  const [octa, setOcta] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    const [cloreRes, octaRes] = await Promise.allSettled([
+      base44.functions.invoke("fetchCloreaiEarnings", {}),
+      base44.functions.invoke("fetchOctaspaceEarnings", {}),
+    ]);
+    if (cloreRes.status === "fulfilled") setClore(cloreRes.value.data);
+    if (octaRes.status === "fulfilled") setOcta(octaRes.value.data);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const totalEarnings = (clore?.total_earnings_usd ?? 0) + (octa?.total_earnings_usd ?? 0);
+  const totalServers = (clore?.total_servers ?? 0) + (octa?.active_nodes ?? 0);
+  const rentedServers = clore?.rented_servers ?? 0;
+
+  // Platform breakdown bar chart data
+  const platformData = [
+    { platform: "Clore.ai",  earnings: clore?.total_earnings_usd ?? 0,  servers: clore?.total_servers ?? 0 },
+    { platform: "OctaSpace", earnings: octa?.total_earnings_usd ?? 0,   servers: octa?.active_nodes ?? 0 },
+  ].filter(p => p.servers > 0 || p.earnings > 0);
+
+  // Top GPU models by market rate from Clore
+  const marketRates = (clore?.market_rates ?? []).slice(0, 8);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse-glow" />
-        <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">Analytics</h1>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="7-Month Revenue" value={`$${(totalRevenue / 1000).toFixed(0)}k`} color="primary" icon={DollarSign} />
-        <StatCard label="Avg GPU Fleet" value={avgGPUs.toString()} color="accent" icon={Cpu} />
-        <StatCard label="PLS Distributed" value={`${(totalPLS / 1e6).toFixed(1)}M`} color="amber" icon={Coins} />
-        <StatCard label="MoM Growth" value="+8.4%" color="purple" icon={TrendingUp} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
-          <SectionTitle>Monthly Revenue</SectionTitle>
-          <div className="mt-4 h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MONTHLY}>
-                <defs>
-                  <linearGradient id="aRevGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00e5ff" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#00e5ff" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="month" tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} width={45} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
-                <Tooltip content={<CTooltip />} />
-                <Area type="monotone" dataKey="revenue" name="Revenue $" stroke="#00e5ff" fill="url(#aRevGrad)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse-glow" />
+          <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">Analytics</h1>
         </div>
-
-        <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
-          <SectionTitle>GPU Fleet Growth</SectionTitle>
-          <div className="mt-4 h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={MONTHLY}>
-                <XAxis dataKey="month" tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} width={30} />
-                <Tooltip content={<CTooltip />} />
-                <Bar dataKey="gpus" name="GPUs" fill="#39ff14" radius={[2, 2, 0, 0]} fillOpacity={0.8} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <button onClick={load} disabled={loading}
+          className="flex items-center gap-2 px-3 py-1.5 border border-cyan/40 text-cyan text-[9px] tracking-[1.5px] uppercase font-mono rounded-md hover:border-cyan transition-colors">
+          <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
       </div>
 
-      <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
-        <SectionTitle>Revenue by Platform (This Month)</SectionTitle>
-        <div className="mt-4 space-y-3">
-          {PLATFORM_SPLIT.map(p => (
-            <div key={p.platform} className="flex items-center gap-3">
-              <span className="text-[10px] font-mono text-muted-foreground w-20 flex-shrink-0">{p.platform}</span>
-              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${p.color}`} style={{ width: `${p.pct}%` }} />
-              </div>
-              <span className="text-[10px] font-mono text-cyan w-16 text-right">${p.revenue.toLocaleString()}</span>
-              <span className="text-[9px] font-mono text-muted-foreground w-8 text-right">{p.pct}%</span>
-            </div>
+      {loading ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="bg-card border border-border rounded-md p-4 animate-pulse h-20" />
           ))}
-          <p className="text-[8px] font-mono text-muted-foreground pt-1">
-            OctaSpace earnings will appear here once nodes are active and earning.
-          </p>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatCard label="Total Earnings" value={`$${totalEarnings.toFixed(2)}`} color="primary" icon={DollarSign} />
+          <StatCard label="Active Servers" value={`${totalServers}`} color="accent" icon={Cpu} />
+          <StatCard label="Currently Rented" value={`${rentedServers}`} color="amber" icon={Coins} />
+          <StatCard
+            label="Utilisation"
+            value={totalServers > 0 ? `${Math.round((rentedServers / totalServers) * 100)}%` : "—"}
+            color="purple" icon={TrendingUp}
+          />
+        </div>
+      )}
 
-      <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
-        <SectionTitle>PLS Token Emissions</SectionTitle>
-        <div className="mt-4 h-40">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={MONTHLY}>
-              <defs>
-                <linearGradient id="plsGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#8844ff" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#8844ff" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="month" tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} width={55} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
-              <Tooltip content={<CTooltip />} />
-              <Area type="monotone" dataKey="pls" name="PLS Emitted" stroke="#8844ff" fill="url(#plsGrad)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
+      {/* Platform breakdown */}
+      {!loading && platformData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
+            <SectionTitle>Earnings by Platform</SectionTitle>
+            <div className="mt-4 h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={platformData}>
+                  <XAxis dataKey="platform" tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} width={45} tickFormatter={v => `$${v.toFixed(2)}`} />
+                  <Tooltip content={<CTooltip />} />
+                  <Bar dataKey="earnings" name="Earnings $" fill="#00e5ff" fillOpacity={0.8} radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
+            <SectionTitle>Servers by Platform</SectionTitle>
+            <div className="mt-4 h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={platformData}>
+                  <XAxis dataKey="platform" tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} width={25} />
+                  <Tooltip content={<CTooltip />} />
+                  <Bar dataKey="servers" name="Servers" fill="#39ff14" fillOpacity={0.8} radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Clore server list */}
+      {!loading && clore?.server_list?.length > 0 && (
+        <div className="bg-card border border-border rounded-md overflow-hidden relative card-gradient-top">
+          <div className="px-4 py-3 border-b border-border">
+            <SectionTitle>Clore.ai Servers</SectionTitle>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  {["Server ID", "GPU", "GPUs", "Rate/hr", "Rented"].map(h => (
+                    <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {clore.server_list.map(s => (
+                  <tr key={s.server_id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">#{s.server_id}</td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{s.gpu_model}</td>
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-cyan">{s.gpu_count}</td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${s.price_per_hour.toFixed(4)}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${s.rented ? "bg-neon-green/10 text-neon-green" : "bg-muted text-muted-foreground"}`}>
+                        {s.rented ? "Rented" : "Available"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Clore.ai market rates */}
+      {!loading && marketRates.length > 0 && (
+        <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
+          <SectionTitle>Live Market Rates — Clore.ai</SectionTitle>
+          <div className="mt-4 space-y-2">
+            {marketRates.map(r => (
+              <div key={r.name} className="flex items-center gap-3">
+                <span className="text-[10px] font-mono text-muted-foreground w-40 flex-shrink-0 truncate">{r.name}</span>
+                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-cyan"
+                    style={{ width: `${Math.min(100, (r.price_per_hour / (marketRates[0]?.price_per_hour || 1)) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono text-cyan w-20 text-right">${r.price_per_hour.toFixed(4)}/hr</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* OctaSpace nodes */}
+      {!loading && octa?.nodes?.length > 0 && (
+        <div className="bg-card border border-border rounded-md overflow-hidden relative card-gradient-top">
+          <div className="px-4 py-3 border-b border-border">
+            <SectionTitle>OctaSpace Nodes</SectionTitle>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  {["Node ID", "GPU", "Status", "Rate/hr", "Earnings"].map(h => (
+                    <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {octa.nodes.map(n => (
+                  <tr key={n.node_id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{n.node_id}</td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{n.gpu_name}</td>
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-neon-green">{n.status}</td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">${n.rate_per_hour.toFixed(4)}</td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${n.earnings_usd.toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!loading && !clore && !octa && (
+        <div className="bg-card border border-dashed border-border rounded-md p-8 text-center text-[10px] font-mono text-muted-foreground">
+          No platform data yet — set CLOREAI_API_KEY and OCTASPACE_API_KEY in base44 env vars.
+        </div>
+      )}
     </div>
   );
 }

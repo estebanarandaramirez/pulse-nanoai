@@ -8,40 +8,49 @@ import StatusTag from "../components/shared/StatusTag";
 import PhantomConnect from "../components/shared/PhantomConnect";
 import { format } from "date-fns";
 
-const MOCK_STREAMS = [
-  { id: "1", source: "gpu_revenue", total_pls: 15000, claimed_pls: 4200, status: "active", end_date: new Date(Date.now() + 86400000 * 20).toISOString() },
-  { id: "2", source: "bonus", total_pls: 8500, claimed_pls: 8500, status: "completed", end_date: new Date(Date.now() - 86400000 * 2).toISOString() },
-  { id: "3", source: "referral", total_pls: 22000, claimed_pls: 0, status: "active", end_date: new Date(Date.now() + 86400000 * 45).toISOString() },
-];
-
-const MOCK_CLAIMS = [
-  { id: "1", amount_pls: 2100, tx_hash: "4hNx7...kPq2", status: "confirmed", created_date: new Date(Date.now() - 86400000 * 3).toISOString() },
-  { id: "2", amount_pls: 1500, tx_hash: "8mBz3...rWt9", status: "confirmed", created_date: new Date(Date.now() - 86400000 * 7).toISOString() },
-  { id: "3", amount_pls: 600, tx_hash: "2kLp9...nQm4", status: "pending", created_date: new Date(Date.now() - 3600000).toISOString() },
-];
-
 export default function Wallet() {
   const { user } = useAuth();
   const [wallet, setWallet] = useState(localStorage.getItem("pulse-wallet"));
-  const [streams, setStreams] = useState(MOCK_STREAMS);
-  const [claims, setClaims] = useState(MOCK_CLAIMS);
+  const [streams, setStreams] = useState([]);
+  const [claims, setClaims] = useState([]);
   const [amount, setAmount] = useState("");
   const [claiming, setClaiming] = useState(false);
   const [claimResult, setClaimResult] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const totalPls = streams.reduce((s, x) => s + x.total_pls, 0);
-  const claimedPls = streams.reduce((s, x) => s + x.claimed_pls, 0);
-  const claimable = totalPls - claimedPls;
+  useEffect(() => {
+    if (!user?.email) { setLoading(false); return; }
+    Promise.all([
+      base44.entities.VestingStream
+        .filter({ user_email: user.email }, "-created_date", 20)
+        .catch(() => []),
+      base44.entities.ClaimEvent
+        .filter({ user_email: user.email }, "-created_date", 50)
+        .catch(() => []),
+    ]).then(([s, c]) => {
+      setStreams(s || []);
+      setClaims((c || []).filter(e => e.amount_pls > 0));
+      setLoading(false);
+    });
+  }, [user?.email]);
+
+  const totalPls = streams.reduce((s, x) => s + (x.total_pls || 0), 0);
+  const claimedPls = streams.reduce((s, x) => s + (x.claimed_pls || 0), 0);
+  const claimable = Math.max(0, totalPls - claimedPls);
 
   const claim = async () => {
     if (!wallet || !amount || parseFloat(amount) <= 0) return;
     setClaiming(true);
+    setClaimResult(null);
     try {
       const r = await base44.functions.invoke("claimPLS", { wallet_address: wallet, amount_pls: parseFloat(amount) });
       setClaimResult(r.data);
       setAmount("");
+      // Reload claims after successful claim
+      const c = await base44.entities.ClaimEvent.filter({ user_email: user.email }, "-created_date", 50).catch(() => []);
+      setClaims((c || []).filter(e => e.amount_pls > 0));
     } catch {
-      setClaimResult({ error: "Claim failed. Check treasury balance." });
+      setClaimResult({ error: "Claim failed. Check treasury balance or try again." });
     }
     setClaiming(false);
   };
@@ -55,14 +64,12 @@ export default function Wallet() {
 
       <PhantomConnect onWalletChange={setWallet} />
 
-      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <StatCard label="Total PULSE" value={totalPls.toLocaleString()} color="primary" icon={Coins} />
-        <StatCard label="Claimed" value={claimedPls.toLocaleString()} color="accent" icon={CheckCircle} />
-        <StatCard label="Claimable" value={claimable.toLocaleString()} color="amber" icon={TrendingUp} />
+        <StatCard label="Total PULSE" value={loading ? "..." : totalPls.toLocaleString()} color="primary" icon={Coins} />
+        <StatCard label="Claimed" value={loading ? "..." : claimedPls.toLocaleString()} color="accent" icon={CheckCircle} />
+        <StatCard label="Claimable" value={loading ? "..." : claimable.toLocaleString()} color="amber" icon={TrendingUp} />
       </div>
 
-      {/* Claim panel */}
       <div className="bg-card border border-cyan/30 rounded-md p-5 glow-cyan relative card-gradient-top">
         <h2 className="font-display font-bold text-sm tracking-[2px] uppercase text-cyan mb-4">Claim PULSE to Wallet</h2>
         {!wallet && (
@@ -71,16 +78,14 @@ export default function Wallet() {
           </div>
         )}
         <div className="flex gap-3">
-          <div className="flex-1 relative">
-            <input
-              type="number"
-              placeholder="Enter PLS amount..."
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
-              disabled={!wallet}
-              className="w-full bg-input border border-border rounded-md px-3 py-2.5 text-[11px] font-mono focus:border-cyan/50 outline-none disabled:opacity-50"
-            />
-          </div>
+          <input
+            type="number"
+            placeholder="Enter PLS amount..."
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            disabled={!wallet}
+            className="flex-1 bg-input border border-border rounded-md px-3 py-2.5 text-[11px] font-mono focus:border-cyan/50 outline-none disabled:opacity-50"
+          />
           <button onClick={() => setAmount(claimable.toString())} disabled={!wallet}
             className="px-3 py-2.5 border border-border rounded-md text-[10px] font-mono text-muted-foreground hover:text-cyan hover:border-cyan/50 transition-colors disabled:opacity-50">
             Max
@@ -97,45 +102,57 @@ export default function Wallet() {
         )}
       </div>
 
-      {/* Vesting Streams */}
-      <div>
-        <h2 className="font-display font-bold text-sm tracking-[2px] uppercase text-foreground mb-3">Vesting Streams</h2>
-        <div className="space-y-3">
-          {streams.map(s => <VestingBar key={s.id} stream={s} />)}
+      {streams.length > 0 && (
+        <div>
+          <h2 className="font-display font-bold text-sm tracking-[2px] uppercase text-foreground mb-3">Vesting Streams</h2>
+          <div className="space-y-3">
+            {streams.map(s => <VestingBar key={s.id} stream={s} />)}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Claim History */}
       <div className="bg-card border border-border rounded-md overflow-hidden relative card-gradient-top">
         <div className="px-4 py-3 border-b border-border">
           <h2 className="font-display font-bold text-sm tracking-[2px] uppercase text-foreground">Claim History</h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border">
-                {["Date", "Amount PULSE", "TX Hash", "Status"].map(h => (
-                  <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {claims.map(c => (
-                <tr key={c.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{format(new Date(c.created_date), "MMM d, yyyy HH:mm")}</td>
-                  <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">{c.amount_pls.toLocaleString()} PULSE</td>
-                  <td className="px-4 py-2.5">
-                    <a href={`https://explorer.solana.com/tx/${c.tx_hash}?cluster=devnet`} target="_blank" rel="noreferrer"
-                      className="text-[10px] font-mono text-muted-foreground hover:text-cyan transition-colors flex items-center gap-1">
-                      {c.tx_hash} <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </td>
-                  <td className="px-4 py-2.5"><StatusTag status={c.status} /></td>
+        {loading ? (
+          <div className="p-8 text-center text-[10px] font-mono text-muted-foreground">Loading...</div>
+        ) : claims.length === 0 ? (
+          <div className="p-8 text-center text-[10px] font-mono text-muted-foreground">
+            No claims yet — PULSE tokens will appear here after your first payout.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  {["Date", "Amount PULSE", "TX Hash", "Status"].map(h => (
+                    <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {claims.map(c => (
+                  <tr key={c.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
+                      {c.created_date ? format(new Date(c.created_date), "MMM d, yyyy HH:mm") : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">{c.amount_pls.toLocaleString()} PULSE</td>
+                    <td className="px-4 py-2.5">
+                      {c.tx_hash ? (
+                        <a href={`https://explorer.solana.com/tx/${c.tx_hash}`} target="_blank" rel="noreferrer"
+                          className="text-[10px] font-mono text-muted-foreground hover:text-cyan transition-colors flex items-center gap-1">
+                          {c.tx_hash.slice(0, 12)}... <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : <span className="text-[10px] font-mono text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5"><StatusTag status={c.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

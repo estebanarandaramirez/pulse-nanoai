@@ -1,8 +1,8 @@
 /**
  * registerGPUDaemon
  * Called by pulse-setup.ps1 after Clore.ai host installation.
- * Creates or updates the GPU record and links it to the Clore.ai server ID
- * so earnings can be attributed to the correct Pulse user.
+ * Creates or updates the GPU record in base44 entities AND Supabase,
+ * then links it to the Clore.ai server ID so earnings can be attributed.
  *
  * Input: { gpu_model, vram_gb, clore_server_id?, platform, location }
  */
@@ -24,11 +24,9 @@ Deno.serve(async (req) => {
 
   const apiKey = Deno.env.get('CLOREAI_API_KEY');
   let serverId = clore_server_id ? parseInt(clore_server_id, 10) : null;
-
-  // Extract 4-digit model number for GPU matching (e.g. "RTX 3060" → "3060")
   const gpuModelNum = gpu_model.match(/\d{4}/)?.[0] ?? '';
 
-  // Step 1: Fetch my_servers to resolve server ID (if not provided) and get live rate
+  // Step 1: Fetch my_servers to resolve server ID and get live rate
   let ratePerHour = 0.3;
   if (apiKey) {
     try {
@@ -38,7 +36,6 @@ Deno.serve(async (req) => {
         const servers: any[] = data.servers ?? [];
 
         if (!serverId && gpuModelNum) {
-          // Find server by matching 4-digit GPU model number in gpu_array
           const matched = servers.find((s: any) =>
             (s.gpu_array ?? []).some((m: string) => m.includes(gpuModelNum))
           );
@@ -58,8 +55,10 @@ Deno.serve(async (req) => {
   const userRateHr = parseFloat((ratePerHour * 0.6).toFixed(4));
   const gpu_id = `CLORE-${gpu_model.replace(/\s+/g, '')}-${(serverId ?? Math.random().toString(36).slice(2, 6)).toString().toUpperCase()}`;
 
+  const now = new Date().toISOString();
+
   try {
-    // Step 2: Create or update GPU record
+    // Step 2: Create or update GPU record in base44
     const existing = serverId
       ? await base44.entities.GPU.filter({ user_email: user.email, clore_server_id: serverId })
       : await base44.entities.GPU.filter({ user_email: user.email, model: gpu_model });
@@ -67,7 +66,7 @@ Deno.serve(async (req) => {
     let gpu;
     if (existing && existing.length > 0) {
       gpu = await base44.entities.GPU.update(existing[0].id, {
-        last_heartbeat: new Date().toISOString(),
+        last_heartbeat: now,
         status: 'active',
         rate_per_hour: userRateHr,
         active_platform: platform,
@@ -84,14 +83,42 @@ Deno.serve(async (req) => {
         total_earned_usd: 0,
         pls_minted: 0,
         location: location || 'Unknown',
-        last_heartbeat: new Date().toISOString(),
+        last_heartbeat: now,
         user_email: user.email,
         clore_server_id: serverId,
         active_platform: platform,
       });
     }
 
-    // Step 3: Assign GPU to node
+    // Step 3: Write to Supabase (source of truth for GPU registry)
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const { createClient } = await import('npm:@supabase/supabase-js@2');
+        const sb = createClient(supabaseUrl, supabaseKey);
+        await sb.from('gpus').upsert({
+          gpu_id: gpu.gpu_id,
+          user_email: user.email,
+          model: gpu_model,
+          vram_gb: parseInt(vram_gb, 10),
+          status: 'active',
+          rate_per_hour: ratePerHour,
+          user_rate_hr: userRateHr,
+          uptime_percent: 100,
+          total_earned_usd: existing?.[0]?.total_earned_usd ?? 0,
+          location: location || 'Unknown',
+          clore_server_id: serverId,
+          active_platform: platform,
+          last_heartbeat: now,
+          base44_id: gpu.id,
+        }, { onConflict: 'gpu_id' });
+      } catch (e: any) {
+        console.error('Supabase write failed (non-fatal):', e.message);
+      }
+    }
+
+    // Step 4: Assign GPU to node
     let nodeInfo: any = null;
     try {
       const nodeRes = await base44.functions.invoke('assignGPUToNode', { gpu_record_id: gpu.id });
@@ -100,7 +127,7 @@ Deno.serve(async (req) => {
       console.error('Node assignment failed:', e.message);
     }
 
-    // Step 4: Auto-pricing — set competitive market price on Clore.ai using the account API key
+    // Step 5: Auto-pricing — set competitive market price on Clore.ai
     let autoPricingApplied = false;
     let autoPricingPrice: number | null = null;
     if (apiKey && serverId) {
