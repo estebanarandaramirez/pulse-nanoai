@@ -388,11 +388,11 @@ while ($true) {
             if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
         }
         if ($util -gt $hi -and -not $paused) {
-            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
+            wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl stop clore-hosting 2>/dev/null"
             $paused = $true
             Add-Content "$env:LOCALAPPDATA\\Pulse\\watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
         } elseif ($util -lt $lo -and $paused) {
-            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start clore-hosting 2>/dev/null"
+            wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-hosting 2>/dev/null"
             $paused = $false
             Add-Content "$env:LOCALAPPDATA\\Pulse\\watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
         }
@@ -412,7 +412,7 @@ while ($true) {
     $autostart = if ($mirroredNetworking) {
 @'
 Start-Sleep 15
-wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "$env:LOCALAPPDATA\\Pulse\\autostart.log"
+wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "$env:LOCALAPPDATA\\Pulse\\autostart.log"
 '@
     } else {
 @"
@@ -427,7 +427,7 @@ if (\$wslIP -and \$wslIP -ne \$lastIP) {
     }
     Set-Content -Path \$lastIPFile -Value \$wslIP
 }
-wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "\$env:LOCALAPPDATA\\Pulse\\autostart.log"
+wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "\$env:LOCALAPPDATA\\Pulse\\autostart.log"
 "@
     }
     $startPath = "$PULSE_DIR\\autostart.ps1"

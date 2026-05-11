@@ -321,7 +321,6 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
     Write-Log "Clore fleet onboarding service started" "OK"
 
     Write-Log "Waiting for Clore.ai services to start (up to 3 min)..."
-    $serverId = ""
     for ($i = 1; $i -le 18; $i++) {
         $svcOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>/dev/null && systemctl is-active clore-onboarding 2>/dev/null && echo both_ok" 2>&1 | Out-String) -match "both_ok"
         if ($svcOk) { Write-Log "Clore.ai services running" "OK"; break }
@@ -331,6 +330,59 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
         }
         Write-Log "  Waiting for services... ($($i * 10)s)"
         Start-Sleep 10
+    }
+
+    Write-Log "Waiting for Clore.ai to assign server ID (up to 5 min)..."
+    $serverId = ""
+    for ($i = 1; $i -le 30; $i++) {
+        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null; cat /opt/clore-hosting/server_id 2>/dev/null; find /opt/clore-hosting -name server_id 2>/dev/null | head -3 | xargs -r cat 2>/dev/null" 2>&1
+        $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
+        if ($candidate) { $serverId = $candidate.Trim(); break }
+        if ($i % 6 -eq 0) {
+            $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1; systemctl is-active clore-onboarding 2>&1" 2>&1
+            Write-Log "  Service status: $($stat -join ' / ')"
+        }
+        Write-Log "  Still waiting... ($($i * 10)s)"
+        Start-Sleep 10
+    }
+    if ($serverId) { Write-Log "Clore.ai Server ID: $serverId" "OK" }
+    else { Write-Log "Server ID not yet assigned — check dashboard in ~5 min" "WARN" }
+
+    # Set competitive pricing — 5% below median for our GPU model on Clore.ai marketplace
+    Write-Log "Setting competitive pricing..."
+    $cloreAuth = $fleetCfg.auth
+    try {
+        $mktResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/marketplace" \`
+            -Headers @{ "auth" = $cloreAuth } -Method GET -ErrorAction Stop
+        $gpuTag = if ($gpuName -match "RTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
+                  elseif ($gpuName -match "GTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
+                  else { ($gpuName -split " " | Select-Object -Last 1) }
+        $gpuListings = @($mktResp.servers | Where-Object {
+            ($_.gpu_array -join " ") -match [regex]::Escape($gpuTag)
+        })
+        $targetDay = 0.08
+        if ($gpuListings.Count -gt 0) {
+            $hrs = $gpuListings | ForEach-Object {
+                $p = $_.price.usd.on_demand_usd; if ($p) { [float]$p }
+            } | Where-Object { $_ -gt 0 }
+            if ($hrs) {
+                $med = ($hrs | Sort-Object)[[math]::Floor($hrs.Count / 2)]
+                $targetDay = [math]::Round($med * 24 * 0.95, 4)
+            }
+        }
+        $spotDay = [math]::Round($targetDay * 0.8, 4)
+        $idNum = if ($serverId) { [int]$serverId } else { 0 }
+        $priceBody = @{ id = $idNum; name = "Pulse-$idNum"; availability = $true; mrl = 96; on_demand = $targetDay; spot = $spotDay } | ConvertTo-Json
+        $priceResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/set_server_settings" \`
+            -Method POST -Headers @{ "auth" = $cloreAuth; "Content-Type" = "application/json" } \`
+            -Body $priceBody -ErrorAction Stop
+        if ($priceResp.code -eq 0) {
+            Write-Log "Pricing set — on-demand: \`$$targetDay/day | spot: \`$$spotDay/day" "OK"
+        } else {
+            Write-Log "Pricing API returned code $($priceResp.code) — set manually in Clore dashboard" "WARN"
+        }
+    } catch {
+        Write-Log "Auto-pricing skipped (set manually in Clore dashboard): $_" "WARN"
     }
 
     Write-Log "Adding Windows Firewall rules..."
@@ -386,11 +438,11 @@ while ($true) {
             if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
         }
         if ($util -gt $hi -and -not $paused) {
-            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop clore-hosting 2>/dev/null"
+            wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl stop clore-hosting 2>/dev/null"
             $paused = $true
             Add-Content "$env:LOCALAPPDATA\\Pulse\\watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
         } elseif ($util -lt $lo -and $paused) {
-            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start clore-hosting 2>/dev/null"
+            wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-hosting 2>/dev/null"
             $paused = $false
             Add-Content "$env:LOCALAPPDATA\\Pulse\\watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
         }
@@ -410,7 +462,7 @@ while ($true) {
     $autostart = if ($mirroredNetworking) {
 @'
 Start-Sleep 15
-wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "$env:LOCALAPPDATA\\Pulse\\autostart.log"
+wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "$env:LOCALAPPDATA\\Pulse\\autostart.log"
 '@
     } else {
 @"
@@ -425,7 +477,7 @@ if (\$wslIP -and \$wslIP -ne \$lastIP) {
     }
     Set-Content -Path \$lastIPFile -Value \$wslIP
 }
-wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "\$env:LOCALAPPDATA\\Pulse\\autostart.log"
+wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-hosting 2>/dev/null' 2>&1 | Add-Content "\$env:LOCALAPPDATA\\Pulse\\autostart.log"
 "@
     }
     $startPath = "$PULSE_DIR\\autostart.ps1"
