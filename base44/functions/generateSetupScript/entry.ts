@@ -336,7 +336,7 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
     $serverId = ""
     for ($i = 1; $i -le 30; $i++) {
         $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null; cat /opt/clore-hosting/server_id 2>/dev/null; find /opt/clore-hosting -name server_id 2>/dev/null | head -3 | xargs -r cat 2>/dev/null" 2>&1
-        $candidate = ($raw | Where-Object { $_ -match '^\s*\d+\s*$' }) | Select-Object -First 1
+        $candidate = ($raw | Where-Object { $_ -match '^\\s*\\d+\\s*$' }) | Select-Object -First 1
         if ($candidate) { $serverId = $candidate.Trim(); break }
         if ($i % 6 -eq 0) {
             $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1; systemctl is-active clore-onboarding 2>&1" 2>&1
@@ -354,8 +354,8 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
     try {
         $mktResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/marketplace" \`
             -Headers @{ "auth" = $cloreAuth } -Method GET -ErrorAction Stop
-        $gpuTag = if ($gpuName -match "RTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
-                  elseif ($gpuName -match "GTX\s*(\d+\s*Ti?)") { $Matches[0].Trim() } \`
+        $gpuTag = if ($gpuName -match "RTX\\s*(\\d+\\s*Ti?)") { $Matches[0].Trim() } \`
+                  elseif ($gpuName -match "GTX\\s*(\\d+\\s*Ti?)") { $Matches[0].Trim() } \`
                   else { ($gpuName -split " " | Select-Object -Last 1) }
         $gpuListings = @($mktResp.servers | Where-Object {
             ($_.gpu_array -join " ") -match [regex]::Escape($gpuTag)
