@@ -1,0 +1,5 @@
+{
+  "name": "migrateGPUsToSupabase",
+  "entry": "main.ts",
+  "automations": []
+}

@@ -1,0 +1,23 @@
+{
+  "name": "monitorGPUHeartbeats",
+  "entry": "main.ts",
+  "automations": [
+    {
+      "name": "GPU Heartbeat Monitor (5 min)",
+      "description": "Check GPU daemon health every 5 minutes. Alert on missing heartbeat (>10 min) or low uptime (<80%).",
+      "function_args": null,
+      "is_active": true,
+      "type": "scheduled",
+      "schedule_mode": "recurring",
+      "schedule_type": "simple",
+      "repeat_unit": "minutes",
+      "repeat_interval": 5,
+      "start_time": null,
+      "repeat_on_days": null,
+      "repeat_on_day_of_month": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  ]
+}
