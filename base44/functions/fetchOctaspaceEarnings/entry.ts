@@ -11,7 +11,7 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-const OCTA_API_BASE = 'https://api.cube.octa.computer/v1';
+const OCTA_API_BASE = 'https://cube.octa.space/api/v1';
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
