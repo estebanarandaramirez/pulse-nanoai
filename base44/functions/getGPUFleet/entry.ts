@@ -14,10 +14,13 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const { data, error } = await supabase
-      .from('gpus')
-      .select('*')
-      .order('last_heartbeat', { ascending: false });
+    const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+    const userEmail = body.user_email;
+
+    let query = supabase.from('gpus').select('*').order('last_heartbeat', { ascending: false });
+    if (userEmail) query = query.eq('user_email', userEmail);
+
+    const { data, error } = await query;
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ gpus: data || [] });

@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { DollarSign, Cpu, Coins, Activity, Server, Users } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import { supabase } from "@/api/supabaseClient";
 import { useAuth } from "@/lib/AuthContext";
 import StatCard from "../components/shared/StatCard";
 import SectionTitle from "../components/shared/SectionTitle";
@@ -38,15 +37,8 @@ export default function Dashboard() {
     if (user?.email) {
       const loadGPUs = async () => {
         try {
-          let gpus = [];
-          if (supabase) {
-            const { data, error } = await supabase
-              .from('gpus')
-              .select('*')
-              .eq('user_email', user.email)
-              .order('last_heartbeat', { ascending: false });
-            if (!error) gpus = data || [];
-          }
+          const res = await base44.functions.invoke('getGPUFleet', { user_email: user.email });
+          const gpus = res.data?.gpus || [];
           setMyGPUs(gpus);
           const nodeId = gpus[0]?.node_id;
           if (nodeId) {
