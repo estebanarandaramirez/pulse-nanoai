@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { RefreshCw, Search } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 import { supabase } from "@/api/supabaseClient";
 import StatCard from "../components/shared/StatCard";
 import StatusTag from "../components/shared/StatusTag";
@@ -17,29 +16,12 @@ export default function GPUFleet() {
   const load = async () => {
     setLoading(true);
     try {
-      // Prefer Supabase — it's the persistent source of truth
       if (supabase) {
         const { data, error } = await supabase
           .from('gpus')
           .select('*')
           .order('last_heartbeat', { ascending: false });
-        if (!error && data?.length) {
-          setGpus(data);
-          setLoading(false);
-          return;
-        }
-      }
-      // Fallback: base44 entities
-      const data = await base44.entities.GPU.list();
-      if (data?.length) {
-        const seen = new Map();
-        [...data]
-          .sort((a, b) => new Date(b.last_heartbeat || 0) - new Date(a.last_heartbeat || 0))
-          .forEach(g => {
-            const key = `${g.user_email}|${g.model}`;
-            if (!seen.has(key)) seen.set(key, g);
-          });
-        setGpus([...seen.values()]);
+        if (!error) setGpus(data || []);
       }
     } catch {}
     setLoading(false);

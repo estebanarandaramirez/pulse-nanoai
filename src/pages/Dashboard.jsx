@@ -45,10 +45,7 @@ export default function Dashboard() {
               .select('*')
               .eq('user_email', user.email)
               .order('last_heartbeat', { ascending: false });
-            if (!error && data?.length) gpus = data;
-          }
-          if (!gpus.length) {
-            gpus = await base44.entities.GPU.filter({ user_email: user.email }).catch(() => []) || [];
+            if (!error) gpus = data || [];
           }
           setMyGPUs(gpus);
           const nodeId = gpus[0]?.node_id;

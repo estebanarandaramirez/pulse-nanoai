@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Activity, AlertTriangle, RefreshCw, Clock } from "lucide-react";
 import StatusTag from "../components/shared/StatusTag";
 import StatCard from "../components/shared/StatCard";
-import { base44 } from "@/api/base44Client";
 import { supabase } from "@/api/supabaseClient";
 
 function HeartbeatAge({ ts }) {
@@ -37,10 +36,8 @@ export default function GPUHealth() {
           .from('gpus')
           .select('gpu_id, model, status, uptime_percent, last_heartbeat, active_platform, user_email, rate_per_hour')
           .order('last_heartbeat', { ascending: false });
-        if (!error && data?.length) { setGpus(data); setLoading(false); return; }
+        if (!error) setGpus(data || []);
       }
-      const data = await base44.entities.GPU.list();
-      if (data?.length) setGpus(data);
     } catch {}
     setLoading(false);
   };
