@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
-  const base44 = createClientFromRequest(req);
+  const base44 = createClientFromRequest(req, { useServiceRole: true });
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -13,13 +13,13 @@ Deno.serve(async (req) => {
   const sb = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const allGPUs = await base44.asServiceRole.entities.GPU.list();
+    const allGPUs = await base44.entities.GPU.list();
     if (!allGPUs?.length) {
       return Response.json({ message: 'No GPU entities found in base44' });
     }
 
     // Deduplicate by gpu_id — keep the one with the most recent heartbeat
-    const seen = new Map<string, any>();
+    const seen = new Map();
     for (const gpu of allGPUs) {
       const id = gpu.gpu_id;
       if (!id) continue;
@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
       upserted: rows.length,
     });
 
-  } catch (err: any) {
+  } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });
   }
 });
