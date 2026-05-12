@@ -12,18 +12,22 @@ export default function GPUFleet() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('gpus')
-          .select('*')
-          .order('last_heartbeat', { ascending: false });
-        if (!error) setGpus(data || []);
-      }
-    } catch {}
+      if (!supabase) { setError("Supabase client not initialized — check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY"); setLoading(false); return; }
+      const { data, err } = await supabase
+        .from('gpus')
+        .select('*')
+        .order('last_heartbeat', { ascending: false });
+      if (err) setError(`Supabase error: ${err.message}`);
+      else setGpus(data || []);
+    } catch (e) {
+      setError(`Unexpected error: ${e.message}`);
+    }
     setLoading(false);
   };
 
@@ -67,6 +71,10 @@ export default function GPUFleet() {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
       </div>
+
+      {error && (
+        <div className="px-4 py-3 bg-pulse-red/10 border border-pulse-red/40 rounded-md text-[10px] font-mono text-pulse-red">{error}</div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <StatCard label="Active / Total" value={`${active} / ${gpus.length}`} color="accent" icon={Activity} />
