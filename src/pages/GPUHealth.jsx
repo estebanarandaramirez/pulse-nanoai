@@ -34,11 +34,11 @@ export default function GPUHealth() {
     setError(null);
     try {
       if (!supabase) { setError("Supabase client not initialized — check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY"); setLoading(false); return; }
-      const { data, err } = await supabase
+      const { data, error: sbError } = await supabase
         .from('gpus')
         .select('gpu_id, model, status, uptime_percent, last_heartbeat, active_platform, user_email, rate_per_hour')
         .order('last_heartbeat', { ascending: false });
-      if (err) setError(`Supabase error: ${err.message}`);
+      if (sbError) setError(`Supabase error: ${sbError.message}`);
       else setGpus(data || []);
     } catch (e) {
       setError(`Unexpected error: ${e.message}`);
