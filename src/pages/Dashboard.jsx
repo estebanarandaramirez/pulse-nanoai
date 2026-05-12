@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { DollarSign, Cpu, Coins, Activity, Server, Users } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { supabase } from "@/api/supabaseClient";
 import { useAuth } from "@/lib/AuthContext";
 import StatCard from "../components/shared/StatCard";
 import SectionTitle from "../components/shared/SectionTitle";
@@ -35,16 +36,30 @@ export default function Dashboard() {
     base44.functions.invoke("fetchCloreaiEarnings", {}).then(r => { if (r.data) setCloreData(r.data); }).catch(() => {});
 
     if (user?.email) {
-      base44.entities.GPU.filter({ user_email: user.email }).then(async gpus => {
-        if (!gpus?.length) { setLoading(false); return; }
-        setMyGPUs(gpus);
-        const nodeId = gpus[0]?.node_id;
-        if (nodeId) {
-          const nodes = await base44.entities.Node.filter({ node_id: nodeId }).catch(() => []);
-          if (nodes?.length) setMyNode(nodes[0]);
-        }
+      const loadGPUs = async () => {
+        try {
+          let gpus = [];
+          if (supabase) {
+            const { data, error } = await supabase
+              .from('gpus')
+              .select('*')
+              .eq('user_email', user.email)
+              .order('last_heartbeat', { ascending: false });
+            if (!error && data?.length) gpus = data;
+          }
+          if (!gpus.length) {
+            gpus = await base44.entities.GPU.filter({ user_email: user.email }).catch(() => []) || [];
+          }
+          setMyGPUs(gpus);
+          const nodeId = gpus[0]?.node_id;
+          if (nodeId) {
+            const nodes = await base44.entities.Node.filter({ node_id: nodeId }).catch(() => []);
+            if (nodes?.length) setMyNode(nodes[0]);
+          }
+        } catch {}
         setLoading(false);
-      }).catch(() => setLoading(false));
+      };
+      loadGPUs();
     } else {
       setLoading(false);
     }
@@ -54,8 +69,9 @@ export default function Dashboard() {
   const myTotalEarned = myGPUs.reduce((s, g) => s + (g.total_earned_usd ?? 0), 0);
   const myDailyEarned = myGPUs.reduce((s, g) => s + (g.daily_earned_usd ?? 0), 0);
 
-  // Projected daily rate from current GPU rates (shown when no historical data yet)
-  const projectedDaily = myGPUs.reduce((s, g) => s + ((g.rate_per_hour || 0) * 24 * 0.9), 0);
+  // Only project earnings from active GPUs
+  const activeGPUs = myGPUs.filter(g => g.status === 'active');
+  const projectedDaily = activeGPUs.reduce((s, g) => s + ((g.rate_per_hour || 0) * 24 * 0.9), 0);
   const displayDaily = myDailyEarned > 0 ? myDailyEarned : projectedDaily;
 
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -100,12 +116,12 @@ export default function Dashboard() {
         <StatCard
           label="Daily Earnings"
           value={displayDaily > 0 ? `$${displayDaily.toFixed(2)}` : "—"}
-          sub={myGPUs.length > 0 ? `${myGPUs.length} GPU${myGPUs.length !== 1 ? "s" : ""} active` : "No GPUs yet"}
+          sub={activeGPUs.length > 0 ? `${activeGPUs.length} GPU${activeGPUs.length !== 1 ? "s" : ""} active` : "No active GPUs"}
           color="primary" icon={DollarSign}
         />
         <StatCard
           label="Total Earned"
-          value={myTotalEarned > 0 ? `$${myTotalEarned.toFixed(2)}` : "—"}
+          value={`$${myTotalEarned.toFixed(2)}`}
           sub="60% of gross revenue"
           color="accent" icon={Coins}
         />
