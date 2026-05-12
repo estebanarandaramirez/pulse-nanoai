@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Activity, AlertTriangle, RefreshCw, Clock } from "lucide-react";
 import StatusTag from "../components/shared/StatusTag";
 import StatCard from "../components/shared/StatCard";
-import { supabase } from "@/api/supabaseClient";
+import { base44 } from "@/api/base44Client";
 
 function HeartbeatAge({ ts }) {
   if (!ts) return <span className="text-[10px] font-mono text-pulse-red">Never</span>;
@@ -33,15 +33,11 @@ export default function GPUHealth() {
     setLoading(true);
     setError(null);
     try {
-      if (!supabase) { setError("Supabase client not initialized — check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY"); setLoading(false); return; }
-      const { data, error: sbError } = await supabase
-        .from('gpus')
-        .select('gpu_id, model, status, uptime_percent, last_heartbeat, active_platform, user_email, rate_per_hour')
-        .order('last_heartbeat', { ascending: false });
-      if (sbError) setError(`Supabase error: ${sbError.message}`);
-      else setGpus(data || []);
+      const res = await base44.functions.invoke('getGPUFleet', {});
+      if (res.data.error) setError(res.data.error);
+      else setGpus(res.data.gpus || []);
     } catch (e) {
-      setError(`Unexpected error: ${e.message}`);
+      setError(`Error: ${e.message}`);
     }
     setLoading(false);
   };

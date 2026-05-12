@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { RefreshCw, Search } from "lucide-react";
-import { supabase } from "@/api/supabaseClient";
+import { base44 } from "@/api/base44Client";
 import StatCard from "../components/shared/StatCard";
 import StatusTag from "../components/shared/StatusTag";
 import { Activity, DollarSign, Cpu } from "lucide-react";
@@ -18,15 +18,11 @@ export default function GPUFleet() {
     setLoading(true);
     setError(null);
     try {
-      if (!supabase) { setError("Supabase client not initialized — check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY"); setLoading(false); return; }
-      const { data, error: sbError } = await supabase
-        .from('gpus')
-        .select('*')
-        .order('last_heartbeat', { ascending: false });
-      if (sbError) setError(`Supabase error: ${sbError.message}`);
-      else setGpus(data || []);
+      const res = await base44.functions.invoke('getGPUFleet', {});
+      if (res.data.error) setError(res.data.error);
+      else setGpus(res.data.gpus || []);
     } catch (e) {
-      setError(`Unexpected error: ${e.message}`);
+      setError(`Error: ${e.message}`);
     }
     setLoading(false);
   };
@@ -60,11 +56,7 @@ export default function GPUFleet() {
         <div className="flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse-glow" />
           <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">GPU Fleet</h1>
-          {supabase && (
-            <span className="px-2 py-0.5 bg-neon-green/10 border border-neon-green/30 rounded text-[8px] tracking-[2px] uppercase font-mono text-neon-green">
-              supabase
-            </span>
-          )}
+
         </div>
         <button onClick={load} disabled={loading}
           className="p-1.5 border border-border rounded-md text-muted-foreground hover:text-cyan hover:border-cyan/50 transition-colors">
