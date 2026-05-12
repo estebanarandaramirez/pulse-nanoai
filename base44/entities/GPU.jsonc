@@ -41,26 +41,61 @@
     },
     "user_email": {
       "type": "string"
-    },
-    "node_id": {
-      "type": "string"
-    },
-    "daily_earned_usd": {
-      "type": "number"
-    },
-    "clore_server_id": {
-      "type": "number"
-    },
-    "octa_node_token": {
-      "type": "string"
-    },
-    "active_platform": {
-      "type": "string"
     }
   },
   "required": [
     "gpu_id",
     "model",
     "status"
-  ]
+  ],
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "read": {
+      "$or": [
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
 }
