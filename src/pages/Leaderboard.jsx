@@ -48,11 +48,9 @@ export default function Leaderboard() {
   const load = async () => {
     setLoading(true);
     try {
-      // Fetch all GPU records — enough to build cross-user rankings
-      const gpus = await base44.entities.GPU.list("-total_earned_usd", 500);
-      if (gpus && gpus.length > 0) {
-        setRankings(buildRankings(gpus));
-      }
+      const res = await base44.functions.invoke('getGPUFleet', {});
+      const gpus = res.data?.gpus || [];
+      setRankings(buildRankings(gpus));
     } catch {
       // Stay with whatever we have
     } finally {

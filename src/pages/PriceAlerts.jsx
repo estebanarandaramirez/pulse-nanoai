@@ -5,19 +5,13 @@ import AlertCard from "../components/shared/AlertCard";
 import CreateAlertModal from "../components/shared/CreateAlertModal";
 import SectionTitle from "../components/shared/SectionTitle";
 
-const MOCK_ALERTS = [
-  { id: "1", label: "RTX 4090 Cheap", platform: "Vast.ai", gpu_model: "RTX 4090", alert_type: "below", threshold: 0.800, status: "active" },
-  { id: "2", label: "H100 Price Spike", platform: "RunPod", gpu_model: "H100", alert_type: "above", threshold: 3.500, status: "triggered" },
-  { id: "3", label: "Any 3090 Alert", platform: "Any", gpu_model: "RTX 3090", alert_type: "below", threshold: 0.280, status: "paused" },
-];
-
 export default function PriceAlerts() {
-  const [alerts, setAlerts] = useState(MOCK_ALERTS);
+  const [alerts, setAlerts] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
 
   const load = async () => {
-    const data = await base44.entities.PriceAlert.list("-created_date");
-    if (data?.length) setAlerts(data);
+    const data = await base44.entities.PriceAlert.list("-created_date").catch(() => []);
+    setAlerts(data || []);
   };
 
   useEffect(() => { load(); }, []);

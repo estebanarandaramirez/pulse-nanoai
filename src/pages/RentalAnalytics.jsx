@@ -31,7 +31,9 @@ export default function RentalAnalytics() {
   const [records, setRecords] = useState(MOCK_RECORDS);
 
   useEffect(() => {
-    base44.entities.RentalRecord.list("-created_date", 50).then(d => { if (d?.length) setRecords(d); }).catch(() => {});
+    base44.entities.RentalRecord.list("-created_date", 50)
+      .then(d => { if (d?.length) setRecords(d); })
+      .catch(() => {});
   }, []);
 
   const totalSpend = records.reduce((s, r) => s + (r.total_cost || 0), 0);

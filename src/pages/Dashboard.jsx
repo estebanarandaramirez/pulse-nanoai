@@ -104,7 +104,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           label="Daily Earnings"
-          value={displayDaily > 0 ? `$${displayDaily.toFixed(2)}` : "—"}
+          value={`$${displayDaily.toFixed(2)}`}
           sub={activeGPUs.length > 0 ? `${activeGPUs.length} GPU${activeGPUs.length !== 1 ? "s" : ""} active` : "No active GPUs"}
           color="primary" icon={DollarSign}
         />
@@ -144,7 +144,7 @@ export default function Dashboard() {
       )}
 
       {/* Revenue chart — projected from current GPU rates */}
-      {myGPUs.length > 0 && displayDaily > 0 && (
+      {myGPUs.length > 0 && (
         <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
           <SectionTitle>
             Daily Revenue Projection
