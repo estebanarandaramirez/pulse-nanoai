@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function CreateAlertModal({ onClose, onCreated }) {
+  const { user } = useAuth();
   const [form, setForm] = useState({
     label: "", platform: "Any", gpu_model: "", alert_type: "below", threshold: "", status: "active"
   });
@@ -13,7 +15,7 @@ export default function CreateAlertModal({ onClose, onCreated }) {
   const save = async () => {
     if (!form.label || !form.gpu_model || !form.threshold) return;
     setSaving(true);
-    await base44.entities.PriceAlert.create({ ...form, threshold: parseFloat(form.threshold) });
+    await base44.entities.PriceAlert.create({ ...form, threshold: parseFloat(form.threshold), user_email: user?.email });
     setSaving(false);
     onCreated?.();
     onClose();
