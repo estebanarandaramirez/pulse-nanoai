@@ -422,27 +422,34 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     wsl -d Ubuntu --user root -- bash -c "systemctl enable osn 2>/dev/null; systemctl start osn 2>/dev/null"
     Set-Step "osn service started" "PASS"
 
-    # ── Poll for OctaSpace node token ─────────────────────────────────────────
-    Write-Log "Waiting for OctaSpace node token..."
+    # ── Extract OctaSpace node token from installer output ────────────────────
+    # The installer prints a box: ║  Node Token: XXXXXXXXXX  ║ to stdout.
     $octaNodeToken = ""
-    for ($i = 1; $i -le 12; $i++) {
-        # osn stores its node token in /etc/osn/node.json or exposes it via status
-        $raw = wsl -d Ubuntu --user root -- bash -c @'
-for f in /etc/osn/node.json /var/lib/osn/node.json /opt/osn/node.json; do
-    [ -f "$f" ] && python3 -c "import json,sys; d=json.load(open('$f')); print(d.get('token','') or d.get('node_token','') or d.get('id',''))" 2>/dev/null && break
-done
-'@ 2>&1
-        $candidate = ($raw | Where-Object { $_ -match '^\s*\S{8,}\s*$' }) | Select-Object -First 1
-        if ($candidate) { $octaNodeToken = $candidate.Trim(); break }
-        Write-Log "  Still waiting... ($($i * 10)s elapsed)"
-        Start-Sleep 10
-    }
-    if ($octaNodeToken) {
+    $tokenMatch = $octaOutput | Select-String -Pattern 'Node Token:\s*(\S+)'
+    if ($tokenMatch) {
+        $octaNodeToken = $tokenMatch.Matches[0].Groups[1].Value.Trim()
         Write-Log "OctaSpace node token: $octaNodeToken" "OK"
         Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
     } else {
-        Write-Log "Node token not yet found — check cube.octa.computer after setup completes" "WARN"
-        Set-Step "OctaSpace node token" "WARN" "Not yet assigned — check cube.octa.computer"
+        # Fallback: check config files written by osn after first start
+        Write-Log "Token not found in installer output — checking osn config files..."
+        Start-Sleep 15
+        $raw = wsl -d Ubuntu --user root -- bash -c @'
+for f in /home/octa/osn/etc/sys.config /etc/osn/node.json /var/lib/osn/node.json; do
+    [ -f "$f" ] || continue
+    tok=$(grep -oP '"node_token"\s*:\s*"\K[^"]+' "$f" 2>/dev/null || grep -oP '"token"\s*:\s*"\K[^"]+' "$f" 2>/dev/null)
+    [ -n "$tok" ] && echo "$tok" && break
+done
+'@ 2>&1
+        $candidate = ($raw | Where-Object { $_ -match '^\s*\S{6,}\s*$' }) | Select-Object -First 1
+        if ($candidate) {
+            $octaNodeToken = $candidate.Trim()
+            Write-Log "OctaSpace node token (from config): $octaNodeToken" "OK"
+            Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
+        } else {
+            Write-Log "Node token not found — it will appear at cube.octa.computer after the node connects" "WARN"
+            Set-Step "OctaSpace node token" "WARN" "Not yet assigned — check cube.octa.computer"
+        }
     }
 
     # ── Networking: Windows Firewall + UPnP ──────────────────────────────────
@@ -667,7 +674,7 @@ wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
     }
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    Unregister-ScheduledTask -TaskName $TASK_NAME -Confirm:$false -ErrorAction SilentlyContinue
+    schtasks /delete /tn $TASK_NAME /f 2>$null | Out-Null
     Remove-Item $PHASE_FILE -ErrorAction SilentlyContinue
 
     # ── Summary ───────────────────────────────────────────────────────────────

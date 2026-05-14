@@ -433,6 +433,12 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     Write-Log "Clore.ai install complete" "OK"
     Set-Step "Clore.ai host client" "PASS"
 
+    # ── Ensure daemon.json has default-runtime:nvidia ─────────────────────────
+    # Clore's install.sh does not set default-runtime, causing Docker failure badge.
+    Write-Log "Setting Docker default runtime to nvidia..."
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo 'eyJpcHRhYmxlcyI6ZmFsc2UsImRlZmF1bHQtcnVudGltZSI6Im52aWRpYSIsInJ1bnRpbWVzIjp7Im52aWRpYSI6eyJwYXRoIjoibnZpZGlhLWNvbnRhaW5lci1ydW50aW1lIiwicnVudGltZUFyZ3MiOltdfX19' | base64 -d > /etc/docker/daemon.json && systemctl restart docker 2>/dev/null; true"
+    Write-Log "daemon.json updated (default-runtime=nvidia)" "OK"
+
     # ── Decode fleet token and write /opt/clore-hosting/onboarding.json ─────────
     # The fleet token is a base64-encoded JSON blob from clore.ai Mass Onboard.
     # clore-onboarding.service reads this file, calls machine_onboarding, gets auth
@@ -488,6 +494,10 @@ pip3 install -q requests 2>&1 | tail -1
 mkdir -p /opt/clore-onboarding
 curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main" -o /opt/clore-onboarding/clore_onboarding.py || { echo "ERROR: clore_onboarding.py download failed"; exit 1; }
 curl -fsSL "https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main" -o /opt/clore-onboarding/specs.py || { echo "ERROR: specs.py download failed"; exit 1; }
+printf '#!/bin/bash\ncd /opt/clore-hosting/hosting\nwhile true; do\n    setsid -w /opt/clore-hosting/.miniconda-env/bin/python3 hosting.py --service\n    echo "hosting.py restarting in 5s..."\n    sleep 5\ndone\n' > /opt/clore-hosting/pulse-hosting-loop.sh
+chmod +x /opt/clore-hosting/pulse-hosting-loop.sh
+mkdir -p /etc/systemd/system/clore-hosting.service.d
+printf '[Unit]\nAfter=docker.service\n\n[Service]\nEnvironment="PYTHONUNBUFFERED=1"\nEnvironment="PATH=/opt/clore-hosting/.miniconda-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\nExecStartPre=/usr/bin/docker container prune -f\nExecStartPre=/usr/bin/docker network prune -f\nExecStartPre=/bin/bash -c "for br in $(ip -br link show type bridge 2>/dev/null | grep -oE ^br-[^ ]+); do ip link set dev $br down 2>/dev/null; ip link delete $br 2>/dev/null; done; true"\nExecStartPre=/bin/rm -f /opt/clore-hosting/.clore-partner/host_facts/partner_interface.socket\nExecStart=\nExecStart=/opt/clore-hosting/pulse-hosting-loop.sh\n' > /etc/systemd/system/clore-hosting.service.d/override.conf
 systemctl daemon-reload
 systemctl enable clore-hosting
 systemctl enable clore-onboarding
@@ -499,6 +509,10 @@ echo "Starting clore-hosting..."
 systemctl start clore-hosting || true
 echo "onboarding=$(systemctl is-active clore-onboarding 2>&1)"
 echo "hosting=$(systemctl is-active clore-hosting 2>&1)"
+echo "Disabling clore-onboarding — registration complete, ongoing operation uses clore-hosting only..."
+systemctl stop clore-onboarding
+systemctl disable clore-onboarding
+echo "clore-onboarding disabled"
 '@) -replace "`r`n", "`n"
     $setupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($setupOnboarding))
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d > /tmp/setup_onboarding.sh"
@@ -682,7 +696,7 @@ while ($true) {
         # Mirrored networking: WSL2 IP is stable, no portproxy refresh needed
         @'
 Start-Sleep 15
-wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-onboarding 2>/dev/null; systemctl start clore-hosting 2>/dev/null' 2>&1 |
+wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-hosting 2>/dev/null' 2>&1 |
     Add-Content "$env:LOCALAPPDATA\Pulse\autostart.log"
 '@
     } else {
@@ -699,7 +713,7 @@ if (`$wslIP -and `$wslIP -ne `$lastIP) {
     }
     Set-Content -Path `$lastIPFile -Value `$wslIP
 }
-wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-onboarding 2>/dev/null; systemctl start clore-hosting 2>/dev/null' 2>&1 |
+wsl -d Ubuntu-22.04 --user root -- bash -c 'systemctl start clore-hosting 2>/dev/null' 2>&1 |
     Add-Content "`$env:LOCALAPPDATA\Pulse\autostart.log"
 "@
     }
