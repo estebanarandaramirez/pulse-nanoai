@@ -163,6 +163,16 @@ async function claimNodeOnCube(
   const tokenField = extractTokenField(newNodeHtml);
   const formAction = extractFormAction(newNodeHtml, `${CUBE_BASE}/hosting/nodes`);
 
+  // If CSRF not found, return a snippet so we can see the actual page structure
+  if (!newNodeCsrf) {
+    const snippet = newNodeHtml.replace(/<script[\s\S]*?<\/script>/gi, '').slice(0, 1500);
+    return {
+      success: false,
+      message: 'Could not extract CSRF token from Add Node form — page structure unexpected',
+      debug: `pageSnippet=${snippet}`,
+    };
+  }
+
   // ── Step 4: POST the node token ───────────────────────────────────────────────
   const createBody = new URLSearchParams({
     'authenticity_token': newNodeCsrf,
