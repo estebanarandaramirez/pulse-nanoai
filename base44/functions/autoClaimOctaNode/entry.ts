@@ -55,8 +55,8 @@ function extractTokenField(html: string): string {
 }
 
 function extractFormAction(html: string, fallback: string): string {
-  // Find all forms; skip sign_out / sign_in navigation forms
-  const forms = [...html.matchAll(/<form[^>]+action=["']([^"']+)["']/gi)];
+  // Match only the HTML action= attribute (not data-action= or similar)
+  const forms = [...html.matchAll(/<form[^>]+\saction=["']([^"']+)["']/gi)];
   for (const m of forms) {
     const action = m[1].startsWith('http') ? m[1] : `${CUBE_BASE}${m[1]}`;
     if (!action.includes('sign_out') && !action.includes('sign_in')) return action;
