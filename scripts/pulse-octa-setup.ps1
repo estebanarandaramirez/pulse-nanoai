@@ -294,18 +294,19 @@ function Invoke-Phase2 {
         Write-Log "Downloading Ubuntu..."
         wsl --install -d Ubuntu --no-launch 2>&1 | Out-Null
 
-        Write-Log "Initializing Ubuntu (first boot)..."
-        wsl -d Ubuntu --user root -- bash -c "echo initialized" 2>&1 | Out-Null
+        Write-Log "Initializing Ubuntu headlessly (no GUI required)..."
+        $ubuntuExe = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps" -Filter "ubuntu*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($ubuntuExe) {
+            & $ubuntuExe.FullName install --root 2>&1 | Out-Null
+        } else {
+            wsl -d Ubuntu --user root -- bash -c "echo ok" 2>&1 | Out-Null
+        }
+        Start-Sleep 5
 
-        $check = wsl -d Ubuntu -- echo "ok" 2>&1
+        $check = wsl -d Ubuntu --user root -- bash -c "echo ok" 2>&1
         if ($check -notmatch "ok") {
-            Write-Log "Headless init failed — launching Ubuntu for first-time setup..." "WARN"
-            Write-Host ""
-            Write-Host "  Ubuntu needs a one-time setup. A new window will open." -ForegroundColor Yellow
-            Write-Host "  Create a Linux username + password, then close that window." -ForegroundColor Yellow
-            Write-Host "  This installer will continue automatically." -ForegroundColor Yellow
-            Write-Host ""
-            Start-Process wsl.exe -ArgumentList "-d Ubuntu" -Wait
+            Write-Log "Ubuntu root access failed — re-run installer." "ERROR"
+            Show-Diagnostics; Wait-ForKey; exit 1
         }
 
         Write-Log "Ubuntu installed and initialized" "OK"
