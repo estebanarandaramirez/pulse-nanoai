@@ -205,10 +205,16 @@ async function claimNodeOnCube(
     };
   }
 
-  // ── Step 4: GET the Add Node form ────────────────────────────────────────────
+  // ── Step 4: GET the Add Node form (load in Turbo modal context) ──────────────
   const newNodeRes = await fetch(addNodeUrl, {
     redirect: 'follow',
-    headers: { ...commonHeaders, 'Cookie': jar.toString(), 'Referer': `${CUBE_BASE}/hosting/nodes` },
+    headers: {
+      ...commonHeaders,
+      'Accept': 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml',
+      'Cookie': jar.toString(),
+      'Referer': `${CUBE_BASE}/hosting/nodes`,
+      'Turbo-Frame': 'modal',
+    },
   });
   jar.ingest(newNodeRes.headers);
 
@@ -234,23 +240,25 @@ async function claimNodeOnCube(
   }
 
   // ── Step 5: POST the node token ───────────────────────────────────────────────
-  // Build body from ALL form fields (picks up data_center_id, etc.) then override token
-  const tokenField = (() => {
-    const m = [...newNodeHtml.matchAll(/<input[^>]+name=["']([^"']*token[^"']*)["']/gi)];
-    for (const r of m) { if (!r[1].includes('authenticity')) return r[1]; }
-    return 'node[token]';
-  })();
-  const createBody = extractFormBody(newNodeHtml, formAction, { field: tokenField, value: token });
+  // Build body from form hidden inputs + selects, then add fields the browser
+  // sets via JavaScript (data_center_type radio, name text input, commit button)
+  const createBody = extractFormBody(newNodeHtml, formAction, { field: 'node[token]', value: token });
+  createBody.set('data_center_type', 'own');   // "Select" radio — always use existing DC
+  createBody.set('node[name]', '');            // optional name field
+  createBody.set('commit', 'Create');
 
   const createRes = await fetch(formAction, {
     method: 'POST',
     redirect: 'follow',
     headers: {
       ...commonHeaders,
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml',
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
       'Cookie': jar.toString(),
-      'Referer': addNodeUrl,
+      'Referer': `${CUBE_BASE}/hosting/nodes`,
       'Origin': CUBE_BASE,
+      'Turbo-Frame': 'modal',
+      'X-CSRF-Token': newNodeCsrf,
     },
     body: createBody.toString(),
   });
