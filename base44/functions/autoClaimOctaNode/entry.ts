@@ -163,24 +163,38 @@ async function claimNodeOnCube(
   jar.ingest(createRes.headers);
   const createHtml = await createRes.text();
 
-  // Success signals: redirected away from /new, or shows node in list
-  const stillOnNewForm = createRes.url.includes('/new');
-  const hasErrors = /(?:^|\s)(?:alert|error|flash-error|is-invalid)/i.test(createHtml)
-    && !/success|notice|flash-notice/i.test(createHtml);
+  // ── Step 5: Verify by fetching the nodes list ─────────────────────────────────
+  // Redirect away from /new is not a reliable success signal — Rails can redirect
+  // to the index with an error flash. The only ground truth is whether the token
+  // now appears in the nodes list.
+  const listRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
+    redirect: 'follow',
+    headers: {
+      ...commonHeaders,
+      'Cookie': jar.toString(),
+      'Referer': CUBE_BASE,
+    },
+  });
+  jar.ingest(listRes.headers);
+  const listHtml = await listRes.text();
 
-  if (!stillOnNewForm && !hasErrors) {
+  if (listHtml.includes(token)) {
     return { success: true, message: `Node token ${token} claimed on cube.octa.computer` };
   }
 
-  // Extract inline error message from Rails flash or form errors
-  const errMatch = createHtml.match(
-    /<[^>]+class="[^"]*(?:alert|flash|error)[^"]*"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{5,})/i,
+  // Token not in list — extract the error from whichever page we landed on
+  const errorSource = createRes.url.includes('/new') ? createHtml : createHtml;
+  const errMatch = errorSource.match(
+    /<[^>]+class="[^"]*(?:alert|flash|error|notice)[^"]*"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{5,})/i,
   );
-  const errMsg = errMatch ? errMatch[1].trim() : `Form returned ${createRes.status} (field: ${tokenField})`;
+  const errMsg = errMatch
+    ? errMatch[1].trim()
+    : `Token not found in nodes list after submission (field: ${tokenField}, action: ${formAction}, status: ${createRes.status})`;
+
   return {
     success: false,
     message: `Node claim failed: ${errMsg}`,
-    debug: `tokenField=${tokenField} action=${formAction} status=${createRes.status}`,
+    debug: `tokenField=${tokenField} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url}`,
   };
 }
 
