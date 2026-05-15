@@ -139,22 +139,58 @@ async function claimNodeOnCube(
     };
   }
 
-  // ── Step 3: GET the "Add Node" form ──────────────────────────────────────────
-  const newNodeRes = await fetch(`${CUBE_BASE}/hosting/nodes/new`, {
+  // ── Step 3: GET the nodes list to discover the "Add Node" URL ───────────────
+  const listPageRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
     redirect: 'follow',
-    headers: {
-      ...commonHeaders,
-      'Cookie': jar.toString(),
-      'Referer': `${CUBE_BASE}/`,
-    },
+    headers: { ...commonHeaders, 'Cookie': jar.toString(), 'Referer': `${CUBE_BASE}/` },
+  });
+  jar.ingest(listPageRes.headers);
+
+  if (listPageRes.url.includes('/users/sign_in')) {
+    return {
+      success: false,
+      message: 'Redirected to sign-in when accessing nodes list — session not established',
+      debug: `finalSignInUrl=${signInRes.url}`,
+    };
+  }
+
+  const listPageHtml = await listPageRes.text();
+
+  // If token is already claimed, we're done
+  if (listPageHtml.includes(token)) {
+    return { success: true, message: `Node token ${token} is already claimed on cube.octa.computer` };
+  }
+
+  // Find the "Add Node" / "New Node" href in the nodes list page
+  const addNodeUrl = (() => {
+    const m = listPageHtml.match(/href=["']([^"']*(?:new|add)[^"']*)["'][^>]*>[\s\S]{0,60}(?:node|Node)/i)
+      ?? listPageHtml.match(/(?:node|Node)[\s\S]{0,60}<[^>]+href=["']([^"']*(?:new|add)[^"']*)["']/i)
+      ?? listPageHtml.match(/href=["']([^"']+)["'][^>]*>[\s\S]{0,30}(?:Add|New)[\s\S]{0,30}Node/i);
+    if (!m) return null;
+    return m[1].startsWith('http') ? m[1] : `${CUBE_BASE}${m[1]}`;
+  })();
+
+  if (!addNodeUrl) {
+    const snippet = listPageHtml.replace(/<script[\s\S]*?<\/script>/gi, '').slice(0, 2000);
+    return {
+      success: false,
+      message: 'Could not find Add Node link on the nodes list page',
+      debug: `listPageSnippet=${snippet}`,
+    };
+  }
+
+  // ── Step 4: GET the Add Node form ────────────────────────────────────────────
+  const newNodeRes = await fetch(addNodeUrl, {
+    redirect: 'follow',
+    headers: { ...commonHeaders, 'Cookie': jar.toString(), 'Referer': `${CUBE_BASE}/hosting/nodes` },
   });
   jar.ingest(newNodeRes.headers);
 
   if (newNodeRes.url.includes('/users/sign_in')) {
     return {
       success: false,
-      message: 'Redirected to sign-in when accessing Add Node — session not established',
-      debug: `finalSignInUrl=${signInRes.url} cookieCount=${jar.toString().split(';').length}`,
+      message: 'Redirected to sign-in when accessing Add Node form',
+      debug: `addNodeUrl=${addNodeUrl}`,
     };
   }
 
@@ -163,17 +199,16 @@ async function claimNodeOnCube(
   const tokenField = extractTokenField(newNodeHtml);
   const formAction = extractFormAction(newNodeHtml, `${CUBE_BASE}/hosting/nodes`);
 
-  // If CSRF not found, return a snippet so we can see the actual page structure
   if (!newNodeCsrf) {
     const snippet = newNodeHtml.replace(/<script[\s\S]*?<\/script>/gi, '').slice(0, 1500);
     return {
       success: false,
-      message: 'Could not extract CSRF token from Add Node form — page structure unexpected',
-      debug: `pageSnippet=${snippet}`,
+      message: 'Could not extract CSRF token from Add Node form',
+      debug: `addNodeUrl=${addNodeUrl} pageSnippet=${snippet}`,
     };
   }
 
-  // ── Step 4: POST the node token ───────────────────────────────────────────────
+  // ── Step 5: POST the node token ───────────────────────────────────────────────
   const createBody = new URLSearchParams({
     'authenticity_token': newNodeCsrf,
     [tokenField]: token,
@@ -187,7 +222,7 @@ async function claimNodeOnCube(
       ...commonHeaders,
       'Content-Type': 'application/x-www-form-urlencoded',
       'Cookie': jar.toString(),
-      'Referer': `${CUBE_BASE}/hosting/nodes/new`,
+      'Referer': addNodeUrl,
       'Origin': CUBE_BASE,
     },
     body: createBody.toString(),
@@ -195,19 +230,15 @@ async function claimNodeOnCube(
   jar.ingest(createRes.headers);
   const createHtml = await createRes.text();
 
-  // ── Step 5: Verify by fetching the nodes list ─────────────────────────────────
-  const listRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
+  // ── Step 6: Verify by fetching the nodes list ─────────────────────────────────
+  const verifyRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
     redirect: 'follow',
-    headers: {
-      ...commonHeaders,
-      'Cookie': jar.toString(),
-      'Referer': CUBE_BASE,
-    },
+    headers: { ...commonHeaders, 'Cookie': jar.toString(), 'Referer': CUBE_BASE },
   });
-  jar.ingest(listRes.headers);
-  const listHtml = await listRes.text();
+  jar.ingest(verifyRes.headers);
+  const verifyHtml = await verifyRes.text();
 
-  if (listHtml.includes(token)) {
+  if (verifyHtml.includes(token)) {
     return { success: true, message: `Node token ${token} claimed on cube.octa.computer` };
   }
 
@@ -221,7 +252,7 @@ async function claimNodeOnCube(
   return {
     success: false,
     message: `Node claim failed: ${errMsg}`,
-    debug: `step2Status=${signInStatus} step3Url=${newNodeRes.url} csrfFound=${!!newNodeCsrf} tokenField=${tokenField} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url}`,
+    debug: `addNodeUrl=${addNodeUrl} csrfFound=${!!newNodeCsrf} tokenField=${tokenField} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url}`,
   };
 }
 
