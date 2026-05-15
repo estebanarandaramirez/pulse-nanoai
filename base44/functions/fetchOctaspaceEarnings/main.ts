@@ -10,7 +10,12 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-const OCTA_API_BASE = 'https://api.octa.space';
+// Try cube.octa.computer first (node-operator portal API),
+// fall back to api.octa.space (consumer SDK API) if it fails.
+const OCTA_HOSTS = [
+  'https://cube.octa.computer/api/v1',
+  'https://api.octa.space',
+];
 
 const EMPTY = {
   platform: 'OctaSpace',
@@ -59,28 +64,25 @@ Deno.serve(async (req) => {
     'Content-Type': 'application/json',
   };
 
-  // ── Nodes ────────────────────────────────────────────────────────────────────
-  const nodesRaw = await safeFetch(`${OCTA_API_BASE}/nodes`, headers);
+  // ── Try each host until one returns valid JSON ───────────────────────────────
+  let nodesData: any = null;
+  let workingBase = '';
+  const hostDiag: string[] = [];
 
-  if (nodesRaw.fetchError) {
-    return Response.json({
-      ...EMPTY,
-      error: `Network error fetching nodes: ${nodesRaw.fetchError}`,
-    });
+  for (const base of OCTA_HOSTS) {
+    const r = await safeFetch(`${base}/nodes`, headers);
+    const diag = `${base}/nodes → HTTP ${r.status} (${r.contentType || 'no-ct'})${r.fetchError ? ' fetchErr:' + r.fetchError : ''}`;
+    hostDiag.push(diag);
+    if (!r.fetchError && r.ok && r.contentType.includes('application/json')) {
+      const parsed = tryParse(r.text);
+      if (parsed) { nodesData = parsed; workingBase = base; break; }
+    }
   }
 
-  if (!nodesRaw.ok || !nodesRaw.contentType.includes('application/json')) {
-    return Response.json({
-      ...EMPTY,
-      error: `nodes endpoint returned HTTP ${nodesRaw.status} (${nodesRaw.contentType || 'no content-type'}). Body: ${nodesRaw.text.slice(0, 500)}`,
-    });
-  }
-
-  const nodesData = tryParse(nodesRaw.text);
   if (!nodesData) {
     return Response.json({
       ...EMPTY,
-      error: `nodes endpoint returned invalid JSON. Raw: ${nodesRaw.text.slice(0, 500)}`,
+      error: `No OctaSpace host returned valid JSON. Tried: ${hostDiag.join(' | ')}`,
     });
   }
 
@@ -90,7 +92,7 @@ Deno.serve(async (req) => {
 
   // ── Balance ──────────────────────────────────────────────────────────────────
   let balanceOcta = 0;
-  const balRaw = await safeFetch(`${OCTA_API_BASE}/accounts/balance`, headers);
+  const balRaw = await safeFetch(`${workingBase}/accounts/balance`, headers);
   if (balRaw.ok && balRaw.contentType.includes('application/json')) {
     const balData = tryParse(balRaw.text);
     balanceOcta = parseFloat(balData?.balance ?? 0);
