@@ -1,4 +1,4 @@
 {
   "name": "registerOctaspaceDaemon",
-  "entry": "main.ts"
+  "entry": "entry.ts"
 }
