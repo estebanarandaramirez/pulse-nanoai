@@ -1,17 +1,54 @@
 /**
  * fetchOctaspaceEarnings
- * Fetches GPU rental earnings from OctaSpace for nodes registered under
- * the Pulse master account.
+ * Fetches GPU node info and account balance from OctaSpace.
  *
  * Required env vars:
- *   OCTASPACE_API_KEY — Pulse's OctaSpace API key (from cube.octa.computer)
+ *   OCTASPACE_API_KEY — API key from Settings on cube.octa.space
  *
- * OctaSpace API base: https://api.cube.octa.computer/v1
- * Auth: Bearer token
+ * OctaSpace API base: https://api.octa.space
+ * Auth: Authorization: <api_key>  (no Bearer prefix — per python-sdk source)
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-const OCTA_API_BASE = 'https://cube.octa.space/api/v1';
+// Try cube.octa.computer first (node-operator portal API),
+// fall back to api.octa.space (consumer SDK API) if it fails.
+const OCTA_HOSTS = [
+  'https://cube.octa.computer/api/v1',
+  'https://api.octa.space',
+];
+
+const EMPTY = {
+  platform: 'OctaSpace',
+  total_earnings_usd: 0,
+  balance_octa: 0,
+  octa_price_usd: 0,
+  total_nodes: 0,
+  active_nodes: 0,
+  nodes: [],
+  market_rates: [],
+  last_fetched: new Date().toISOString(),
+};
+
+/** Fetch a URL and return { status, contentType, text }. Never throws. */
+async function safeFetch(url: string, headers: Record<string, string>) {
+  try {
+    const res = await fetch(url, { headers });
+    const text = await res.text();
+    return {
+      ok: res.ok,
+      status: res.status,
+      contentType: res.headers.get('content-type') ?? '',
+      text,
+    };
+  } catch (e: any) {
+    return { ok: false, status: 0, contentType: '', text: '', fetchError: e.message };
+  }
+}
+
+/** Parse JSON from text. Returns null on failure. */
+function tryParse(text: string) {
+  try { return JSON.parse(text); } catch { return null; }
+}
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -19,70 +56,79 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = Deno.env.get('OCTASPACE_API_KEY');
-  if (!apiKey) return Response.json({
-    platform: 'OctaSpace',
-    total_earnings_usd: 0,
-    active_nodes: 0,
-    nodes: [],
-    note: 'OCTASPACE_API_KEY not configured — add it in Base44 env vars once you have an OctaSpace master account.',
-  });
+  if (!apiKey) return Response.json({ ...EMPTY, note: 'OCTASPACE_API_KEY not configured' });
 
-  try {
-    // Fetch all nodes registered under the Pulse master account
-    const nodesRes = await fetch(`${OCTA_API_BASE}/hosting/nodes`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+  const headers = {
+    'Authorization': apiKey,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
 
-    if (!nodesRes.ok) {
-      const errText = await nodesRes.text().catch(() => '');
-      return Response.json(
-        { error: `OctaSpace API error ${nodesRes.status}: ${errText}` },
-        { status: 502 },
-      );
+  // ── Try each host until one returns valid JSON ───────────────────────────────
+  let nodesData: any = null;
+  let workingBase = '';
+  const hostDiag: string[] = [];
+
+  for (const base of OCTA_HOSTS) {
+    const r = await safeFetch(`${base}/nodes`, headers);
+    const diag = `${base}/nodes → HTTP ${r.status} (${r.contentType || 'no-ct'})${r.fetchError ? ' fetchErr:' + r.fetchError : ''}`;
+    hostDiag.push(diag);
+    if (!r.fetchError && r.ok && r.contentType.includes('application/json')) {
+      const parsed = tryParse(r.text);
+      if (parsed) { nodesData = parsed; workingBase = base; break; }
     }
+  }
 
-    const nodesData = await nodesRes.json();
-    const nodes = nodesData.nodes ?? nodesData.data ?? nodesData ?? [];
-
-    let totalEarningsUSD = 0;
-    const gpuDetails = [];
-
-    for (const node of nodes) {
-      const isActive = node.status === 'active' || node.state === 'ACTIVE' || node.online === true;
-      if (!isActive) continue;
-
-      const pricePerHour = parseFloat(node.price_per_hour ?? node.rental_price_per_hour ?? 0);
-      const runningHours = parseFloat(node.total_running_hours ?? node.running_hours ?? 0);
-      const earningsUSD = pricePerHour * runningHours;
-
-      totalEarningsUSD += earningsUSD;
-      gpuDetails.push({
-        node_id: node.id ?? node.node_id,
-        node_token: node.token ?? node.node_token ?? '',
-        gpu_name: node.gpu_model ?? node.gpu ?? 'Unknown GPU',
-        status: node.status ?? node.state,
-        earnings_usd: parseFloat(earningsUSD.toFixed(4)),
-        running_hours: runningHours,
-        rate_per_hour: pricePerHour,
-      });
-    }
-
+  if (!nodesData) {
     return Response.json({
-      platform: 'OctaSpace',
-      total_earnings_usd: parseFloat(totalEarningsUSD.toFixed(2)),
-      active_nodes: gpuDetails.length,
-      nodes: gpuDetails,
-    });
-  } catch (error: any) {
-    return Response.json({
-      platform: 'OctaSpace',
-      total_earnings_usd: 0,
-      active_nodes: 0,
-      nodes: [],
-      note: `OctaSpace API unavailable: ${error.message}`,
+      ...EMPTY,
+      error: `No OctaSpace host returned valid JSON. Tried: ${hostDiag.join(' | ')}`,
     });
   }
+
+  const nodes: any[] = Array.isArray(nodesData)
+    ? nodesData
+    : (nodesData.data ?? nodesData.nodes ?? []);
+
+  // ── Balance ──────────────────────────────────────────────────────────────────
+  let balanceOcta = 0;
+  const balRaw = await safeFetch(`${workingBase}/accounts/balance`, headers);
+  if (balRaw.ok && balRaw.contentType.includes('application/json')) {
+    const balData = tryParse(balRaw.text);
+    balanceOcta = parseFloat(balData?.balance ?? 0);
+  }
+
+  // ── OCTA/USD price ───────────────────────────────────────────────────────────
+  let octaPriceUsd = 0.09;
+  const priceRaw = await safeFetch(
+    'https://api.coingecko.com/api/v3/simple/price?ids=octaspace&vs_currencies=usd',
+    { 'Accept': 'application/json' },
+  );
+  if (priceRaw.ok) {
+    const priceData = tryParse(priceRaw.text);
+    octaPriceUsd = priceData?.octaspace?.usd ?? octaPriceUsd;
+  }
+
+  // ── Build response ───────────────────────────────────────────────────────────
+  const nodeList = nodes.map((n: any) => ({
+    node_id: n.id ?? n.node_id,
+    gpu_name: n.system?.gpu ?? n.gpu_model ?? n.gpu ?? 'Unknown GPU',
+    status: (n.state === 'online' || n.status === 'active') ? 'active' : 'offline',
+    rate_per_hour: parseFloat(n.prices?.gpu_hour ?? n.price_per_hour ?? 0),
+    location: n.location?.country ?? '?',
+  }));
+
+  const activeNodes = nodeList.filter(n => n.status === 'active');
+
+  return Response.json({
+    platform: 'OctaSpace',
+    total_earnings_usd: parseFloat((balanceOcta * octaPriceUsd).toFixed(2)),
+    balance_octa: balanceOcta,
+    octa_price_usd: octaPriceUsd,
+    total_nodes: nodeList.length,
+    active_nodes: activeNodes.length,
+    nodes: nodeList,
+    market_rates: [],
+    last_fetched: new Date().toISOString(),
+  });
 });
