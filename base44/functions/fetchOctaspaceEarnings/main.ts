@@ -86,9 +86,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  const rawKeys = Array.isArray(nodesData) ? `array[${nodesData.length}]` : Object.keys(nodesData).join(', ');
-  const rawSnippet = JSON.stringify(nodesData).slice(0, 600);
-
   const nodes: any[] = Array.isArray(nodesData)
     ? nodesData
     : (nodesData.data ?? nodesData.nodes ?? nodesData.items ?? nodesData.results ?? []);
@@ -115,8 +112,8 @@ Deno.serve(async (req) => {
   // ── Build response ───────────────────────────────────────────────────────────
   const nodeList = nodes.map((n: any) => ({
     node_id: n.id ?? n.node_id,
-    gpu_name: n.system?.gpu ?? n.gpu_model ?? n.gpu ?? 'Unknown GPU',
-    status: (n.state === 'online' || n.status === 'active') ? 'active' : 'offline',
+    gpu_name: n.system?.gpus?.[0]?.model ?? n.system?.gpu ?? n.gpu_model ?? n.gpu ?? 'Unknown GPU',
+    status: (n.status === 'online' || n.state === 'online' || n.status === 'active') ? 'active' : 'offline',
     rate_per_hour: parseFloat(n.prices?.gpu_hour ?? n.price_per_hour ?? 0),
     location: n.location?.country ?? '?',
   }));
@@ -133,6 +130,5 @@ Deno.serve(async (req) => {
     nodes: nodeList,
     market_rates: [],
     last_fetched: new Date().toISOString(),
-    _debug: { workingBase, rawKeys, rawSnippet },
   });
 });
