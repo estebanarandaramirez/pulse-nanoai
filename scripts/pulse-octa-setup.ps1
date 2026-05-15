@@ -276,7 +276,7 @@ function Invoke-Phase2 {
     Register-Step "systemd in WSL2"
     Register-Step "WSL2 networking"
     Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
-    Register-Step "Build tools (curl, bash)" "wsl -d Ubuntu -- bash -c 'apt-get update && apt-get install -y curl bash'"
+    Register-Step "Build tools (curl, bash)" "wsl -d Ubuntu-22.04 -- bash -c 'apt-get update && apt-get install -y curl bash'"
     Register-Step "OctaSpace osn installed" "Check install.octa.space or OctaSpace docs"
     Register-Step "osn service started"
     Register-Step "OctaSpace node token"
@@ -290,20 +290,20 @@ function Invoke-Phase2 {
 
     Write-Log "Setting up Ubuntu on WSL2..."
     $distros = wsl --list --quiet 2>&1
-    if ($distros -notmatch "Ubuntu") {
+    if ($distros -notmatch "Ubuntu-22.04") {
         Write-Log "Downloading Ubuntu..."
-        wsl --install -d Ubuntu --no-launch 2>&1 | Out-Null
+        wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-Null
 
         Write-Log "Initializing Ubuntu headlessly (no GUI required)..."
         $ubuntuExe = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps" -Filter "ubuntu*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($ubuntuExe) {
             & $ubuntuExe.FullName install --root 2>&1 | Out-Null
         } else {
-            wsl -d Ubuntu --user root -- bash -c "echo ok" 2>&1 | Out-Null
+            wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-Null
         }
         Start-Sleep 5
 
-        $check = wsl -d Ubuntu --user root -- bash -c "echo ok" 2>&1
+        $check = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
         if ($check -notmatch "ok") {
             Write-Log "Ubuntu root access failed — re-run installer." "ERROR"
             Show-Diagnostics; Wait-ForKey; exit 1
@@ -317,7 +317,7 @@ function Invoke-Phase2 {
 
     # Enable systemd — osn is a systemd service
     Write-Log "Enabling systemd in WSL2 (required for osn service)..."
-    wsl -d Ubuntu --user root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null || printf '[boot]\nsystemd=true\n' > /etc/wsl.conf"
+    wsl -d Ubuntu-22.04 --user root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null || printf '[boot]\nsystemd=true\n' > /etc/wsl.conf"
 
     # WSL2 mirrored networking — especially important for OctaSpace because the
     # tunnel ports 51800-51816 use UDP, and portproxy is TCP-only.
@@ -345,7 +345,7 @@ function Invoke-Phase2 {
 
     wsl --shutdown
     Start-Sleep 20
-    $sdCheck = wsl -d Ubuntu --user root -- bash -c "[ -d /run/systemd/system ] && echo yes || echo no" 2>&1
+    $sdCheck = wsl -d Ubuntu-22.04 --user root -- bash -c "[ -d /run/systemd/system ] && echo yes || echo no" 2>&1
     if ($sdCheck -match "yes") {
         Write-Log "systemd running in WSL2" "OK"
         Set-Step "systemd in WSL2" "PASS"
@@ -364,7 +364,7 @@ function Invoke-Phase2 {
     # ── Pre-install GPU compute drivers inside WSL2 ───────────────────────────
     Write-Log "Checking GPU compute environment in WSL2 ($gpuVendor)..."
     if ($gpuVendor -eq "NVIDIA") {
-        $nvCheck = wsl -d Ubuntu --user root -- bash -c "nvidia-smi -L 2>/dev/null | head -1" 2>&1
+        $nvCheck = wsl -d Ubuntu-22.04 --user root -- bash -c "nvidia-smi -L 2>/dev/null | head -1" 2>&1
         if ($nvCheck -match "GPU 0") {
             Write-Log "NVIDIA GPU visible in WSL2" "OK"
             Set-Step "GPU compute in WSL2" "PASS" "nvidia-smi OK — $gpuName"
@@ -374,12 +374,12 @@ function Invoke-Phase2 {
         }
     } else {
         Write-Log "Installing ROCm for AMD GPU in WSL2 (this takes a few minutes)..."
-        $ubuntuVer = wsl -d Ubuntu --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
+        $ubuntuVer = wsl -d Ubuntu-22.04 --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
         $ubuntuVer = $ubuntuVer.Trim()
         if ($ubuntuVer -notin @("jammy","focal","noble")) { $ubuntuVer = "jammy" }
         $rocmScript = "set -e`nexport DEBIAN_FRONTEND=noninteractive`napt-get update -qq`napt-get install -y -qq wget gnupg ca-certificates`nmkdir -p /etc/apt/keyrings`nwget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg`necho 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 $ubuntuVer main' > /etc/apt/sources.list.d/rocm.list`napt-get update -qq`napt-get install -y -qq rocm-opencl-runtime"
         # Pipe via stdin to avoid CRLF issues with bash -c on Windows
-        $rocmScript | wsl -d Ubuntu --user root -- bash 2>&1 | ForEach-Object { Write-Log $_ }
+        $rocmScript | wsl -d Ubuntu-22.04 --user root -- bash 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -eq 0) {
             Write-Log "ROCm installed" "OK"
             Set-Step "GPU compute in WSL2" "PASS" "ROCm opencl-runtime installed — $gpuName"
@@ -391,7 +391,7 @@ function Invoke-Phase2 {
 
     # ── Install OctaSpace node (osn) inside WSL2 ─────────────────────────────
     Write-Log "Installing osn prerequisites (curl, bash, gum)..."
-    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq curl bash" 2>&1 | ForEach-Object { Write-Log $_ }
+    wsl -d Ubuntu-22.04 --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq curl bash" 2>&1 | ForEach-Object { Write-Log $_ }
     if ($LASTEXITCODE -eq 0) {
         Set-Step "Build tools (curl, bash)" "PASS"
     } else {
@@ -400,7 +400,7 @@ function Invoke-Phase2 {
 
     Write-Log "Installing gum (required by OctaSpace installer)..."
     $gumInstall = "export DEBIAN_FRONTEND=noninteractive && mkdir -p /etc/apt/keyrings && curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg && echo 'deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *' | tee /etc/apt/sources.list.d/charm.list > /dev/null && apt-get update -qq && apt-get install -y -qq gum"
-    wsl -d Ubuntu --user root -- bash -c $gumInstall 2>&1 | ForEach-Object { Write-Log $_ }
+    wsl -d Ubuntu-22.04 --user root -- bash -c $gumInstall 2>&1 | ForEach-Object { Write-Log $_ }
     if ($LASTEXITCODE -ne 0) {
         Write-Log "gum install failed — OctaSpace installer may fail" "WARN"
     } else {
@@ -408,7 +408,7 @@ function Invoke-Phase2 {
     }
 
     Write-Log "Installing OctaSpace node (osn) inside WSL2..."
-    $octaOutput = wsl -d Ubuntu --user root -- bash -c "curl -fsSL https://install.octa.space | bash" 2>&1
+    $octaOutput = wsl -d Ubuntu-22.04 --user root -- bash -c "curl -fsSL https://install.octa.space | bash" 2>&1
     $octaExit = $LASTEXITCODE
     $octaOutput | ForEach-Object { Write-Log $_ }
     if ($octaExit -ne 0) {
@@ -421,7 +421,7 @@ function Invoke-Phase2 {
 
     # Start the service so it can register and generate a node token
     Write-Log "Starting osn service..."
-    wsl -d Ubuntu --user root -- bash -c "systemctl enable osn 2>/dev/null; systemctl start osn 2>/dev/null"
+    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl enable osn 2>/dev/null; systemctl start osn 2>/dev/null"
     Set-Step "osn service started" "PASS"
 
     # ── Extract OctaSpace node token from installer output ────────────────────
@@ -436,7 +436,7 @@ function Invoke-Phase2 {
         # Fallback: check config files written by osn after first start
         Write-Log "Token not found in installer output — checking osn config files..."
         Start-Sleep 15
-        $raw = wsl -d Ubuntu --user root -- bash -c @'
+        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c @'
 for f in /home/octa/osn/etc/sys.config /etc/osn/node.json /var/lib/osn/node.json; do
     [ -f "$f" ] || continue
     tok=$(grep -oP '"node_token"\s*:\s*"\K[^"]+' "$f" 2>/dev/null || grep -oP '"token"\s*:\s*"\K[^"]+' "$f" 2>/dev/null)
@@ -507,7 +507,7 @@ done
     # ── WSL2 Port Proxy (TCP only) ────────────────────────────────────────────
     if (-not $mirroredNetworking) {
         Write-Log "Configuring WSL2 TCP port proxy (Windows host → WSL2 bridge)..."
-        $wslIP = (wsl -d Ubuntu --user root -- bash -c "hostname -I 2>/dev/null").Trim().Split()[0]
+        $wslIP = (wsl -d Ubuntu-22.04 --user root -- bash -c "hostname -I 2>/dev/null").Trim().Split()[0]
         if ($wslIP) {
             Set-WSL2PortProxy -WslIP $wslIP
             Set-Content -Path "$PULSE_DIR\last_wsl_ip" -Value $wslIP -Encoding UTF8
@@ -577,11 +577,11 @@ while ($true) {
             if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
         }
         if ($util -gt $hi -and -not $paused) {
-            wsl -d Ubuntu -- bash -c "sudo systemctl stop osn 2>/dev/null"
+            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop osn 2>/dev/null"
             $paused = $true
             Add-Content "$env:LOCALAPPDATA\Pulse\octa_watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
         } elseif ($util -lt $lo -and $paused) {
-            wsl -d Ubuntu -- bash -c "sudo systemctl start osn 2>/dev/null"
+            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start osn 2>/dev/null"
             $paused = $false
             Add-Content "$env:LOCALAPPDATA\Pulse\octa_watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
         }
@@ -607,13 +607,13 @@ while ($true) {
     $autostart = if ($mirroredNetworking) {
         @'
 Start-Sleep 15
-wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
+wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
     Add-Content "$env:LOCALAPPDATA\Pulse\octa_autostart.log"
 '@
     } else {
         @"
 Start-Sleep 15
-`$wslIP = (wsl -d Ubuntu --user root -- bash -c 'hostname -I 2>/dev/null').Trim().Split()[0]
+`$wslIP = (wsl -d Ubuntu-22.04 --user root -- bash -c 'hostname -I 2>/dev/null').Trim().Split()[0]
 `$lastIPFile = "`$env:LOCALAPPDATA\Pulse\last_wsl_ip"
 `$lastIP = if (Test-Path `$lastIPFile) { (Get-Content `$lastIPFile).Trim() } else { '' }
 if (`$wslIP -and `$wslIP -ne `$lastIP) {
@@ -623,7 +623,7 @@ if (`$wslIP -and `$wslIP -ne `$lastIP) {
     }
     Set-Content -Path `$lastIPFile -Value `$wslIP
 }
-wsl -d Ubuntu -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
+wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
     Add-Content "`$env:LOCALAPPDATA\Pulse\octa_autostart.log"
 "@
     }
