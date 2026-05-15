@@ -128,7 +128,7 @@ export default function AppLayout({ children }) {
       )}
 
       {/* Main */}
-      <main className="flex-1 overflow-y-scroll overflow-x-hidden min-w-0" style={{ scrollbarGutter: 'stable' }}>
+      <main className="flex-1 overflow-y-auto overflow-x-hidden min-w-0" style={{ scrollbarGutter: 'stable' }}>
         {/* Mobile header */}
         <div className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-30">
           <button onClick={() => setSidebarOpen(true)} className="text-muted-foreground hover:text-foreground">
