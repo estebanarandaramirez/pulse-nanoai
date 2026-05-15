@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, Trash2, ChevronDown
+  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, Trash2, ChevronDown, X, AlertTriangle
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
@@ -68,6 +68,7 @@ export default function Dashboard() {
   const [myNode, setMyNode] = useState(null);
   const [gpusLoading, setGpusLoading] = useState(true);
   const [deletingGpu, setDeletingGpu] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null); // GPU object to confirm-delete
   const [gpusOpen, setGpusOpen] = useState(true);
 
   // ── Platform data ────────────────────────────────────────────────────────────
@@ -146,8 +147,10 @@ export default function Dashboard() {
   }, [user?.email, loadClore, loadOcta]);
 
   // ── GPU delete ───────────────────────────────────────────────────────────────
-  const handleDeleteGpu = async (gpu) => {
-    if (!confirm(`Remove ${gpu.model || gpu.gpu_id} from Pulse? This cannot be undone.`)) return;
+  const confirmDeleteGpu = async () => {
+    if (!deleteTarget) return;
+    const gpu = deleteTarget;
+    setDeleteTarget(null);
     setDeletingGpu(gpu.gpu_id);
     try {
       await base44.functions.invoke('deleteGPU', { gpu_id: gpu.gpu_id });
@@ -335,7 +338,7 @@ export default function Dashboard() {
                       <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.total_earned_usd || 0).toFixed(2)}</td>
                       <td className="px-4 py-2.5">
                         <button
-                          onClick={() => handleDeleteGpu(g)}
+                          onClick={() => setDeleteTarget(g)}
                           disabled={deletingGpu === g.gpu_id}
                           className="text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-30"
                           title="Remove from Pulse"
@@ -535,6 +538,44 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ── Delete GPU confirmation modal ── */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-card border border-border rounded-md w-full max-w-sm relative card-gradient-top">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <h2 className="font-display font-bold text-sm tracking-[2px] uppercase text-red-400">Remove GPU</h2>
+              </div>
+              <button onClick={() => setDeleteTarget(null)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-[11px] font-mono text-foreground">
+                Remove <span className="text-red-400 font-semibold">{deleteTarget.model || deleteTarget.gpu_id}</span> from Pulse?
+              </p>
+              <p className="text-[10px] font-mono text-muted-foreground leading-relaxed">
+                This will unregister the GPU from the Pulse network. The daemon on your machine will stop reporting. This cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 text-[10px] tracking-[1px] uppercase font-mono text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteGpu}
+                className="px-4 py-2 text-[10px] tracking-[1px] uppercase font-mono bg-red-500/10 border border-red-500/40 text-red-400 rounded-md hover:bg-red-500/20 hover:border-red-500/60 transition-all"
+              >
+                Remove GPU
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

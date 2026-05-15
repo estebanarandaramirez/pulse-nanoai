@@ -40,12 +40,21 @@ Deno.serve(async (req) => {
   try {
     // Fetch all nodes under the account
     const nodesRes = await fetch(`${OCTA_API_BASE}/nodes`, { headers });
-    if (!nodesRes.ok) {
-      const errText = await nodesRes.text().catch(() => '');
-      return Response.json(
-        { error: `OctaSpace nodes API error ${nodesRes.status}: ${errText}` },
-        { status: 502 },
-      );
+    const nodesCT = nodesRes.headers.get('content-type') ?? '';
+    if (!nodesRes.ok || !nodesCT.includes('application/json')) {
+      const body = await nodesRes.text().catch(() => '');
+      return Response.json({
+        platform: 'OctaSpace',
+        total_earnings_usd: 0,
+        balance_octa: 0,
+        octa_price_usd: 0,
+        total_nodes: 0,
+        active_nodes: 0,
+        nodes: [],
+        market_rates: [],
+        last_fetched: new Date().toISOString(),
+        error: `OctaSpace API returned HTTP ${nodesRes.status} (${nodesCT || 'no content-type'}). Response: ${body.slice(0, 400)}`,
+      });
     }
     const nodesData = await nodesRes.json();
     const nodes: any[] = Array.isArray(nodesData) ? nodesData : (nodesData.data ?? nodesData.nodes ?? []);
