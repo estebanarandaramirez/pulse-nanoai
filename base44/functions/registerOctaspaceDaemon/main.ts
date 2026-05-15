@@ -78,14 +78,15 @@ Deno.serve(async (req) => {
       console.error('Node assignment failed:', e.message);
     }
 
-    // Auto-claim the node on cube.octa.computer for new registrations (not updates)
+    // Auto-claim the node on cube.octa.computer (new and re-registered nodes)
     let claimResult: any = null;
-    const isNewNode = !(existing && existing.length > 0);
-    if (isNewNode && nodeToken) {
+    if (nodeToken) {
       try {
-        const claimRes = await base44.functions.invoke('autoClaimOctaNode', { node_token: nodeToken });
+        const claimRes = await base44.functions.invoke('autoClaimOctaNode', {
+          node_token: nodeToken,
+          node_name: gpu.gpu_id,
+        });
         claimResult = claimRes.data;
-        console.log('autoClaimOctaNode result:', JSON.stringify(claimResult));
       } catch (e: any) {
         console.error('autoClaimOctaNode failed:', e.message);
         claimResult = { success: false, message: e.message };

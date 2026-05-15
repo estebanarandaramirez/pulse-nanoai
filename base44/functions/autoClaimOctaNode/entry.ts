@@ -7,7 +7,7 @@
  *   OCTASPACE_WEB_EMAIL    — email for cube.octa.computer login
  *   OCTASPACE_WEB_PASSWORD — password for cube.octa.computer login
  *
- * Input:  { node_token: string }
+ * Input:  { node_token: string, node_name?: string }
  * Output: { success: boolean, message: string }
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
@@ -91,6 +91,7 @@ async function claimNodeOnCube(
   token: string,
   email: string,
   password: string,
+  nodeName: string,
 ): Promise<{ success: boolean; message: string; debug?: string }> {
   const jar = new CookieJar();
   const commonHeaders = {
@@ -182,10 +183,9 @@ async function claimNodeOnCube(
 
   const listPageHtml = await listPageRes.text();
 
-  // If token is already claimed, we're done
-  if (listPageHtml.includes(token)) {
-    return { success: true, message: `Node token ${token} is already claimed on cube.octa.computer` };
-  }
+  // Note: nodes list shows names not tokens, so we can't detect duplicates here.
+  // OctaSpace's server will reject with "Node was not created" if the token is
+  // already claimed — we'll handle that in Step 6.
 
   // Find the "Add Node" / "New Node" href in the nodes list page
   const addNodeUrl = (() => {
@@ -248,7 +248,7 @@ async function claimNodeOnCube(
     if (key.startsWith('node[data_center_attributes]')) createBody.delete(key);
   }
   createBody.set('data_center_type', 'own');
-  createBody.set('node[name]', 'AutoNode');
+  createBody.set('node[name]', nodeName);
   createBody.set('commit', 'Create');
 
   const turboReqId = crypto.randomUUID();
@@ -274,31 +274,23 @@ async function claimNodeOnCube(
   jar.ingest(createRes.headers);
   const createHtml = await createRes.text();
 
-  // ── Step 6: Verify by fetching the nodes list ─────────────────────────────────
-  const verifyRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
-    redirect: 'follow',
-    headers: { ...commonHeaders, 'Cookie': jar.toString(), 'Referer': CUBE_BASE },
-  });
-  jar.ingest(verifyRes.headers);
-  const verifyHtml = await verifyRes.text();
-
-  if (verifyHtml.includes(token)) {
+  // ── Step 6: Detect success from the POST response ────────────────────────────
+  // The nodes list only shows node names, not tokens — check the Turbo Stream
+  // response directly for OctaSpace's success toast text.
+  if (createHtml.includes('successfully created')) {
     return { success: true, message: `Node token ${token} claimed on cube.octa.computer` };
   }
 
-  const errMatch = createHtml.match(
-    /<[^>]+class="[^"]*(?:alert|flash|error|notice)[^"]*"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{5,})/i,
-  );
-  const errMsg = errMatch
-    ? errMatch[1].trim()
-    : `Token not found in nodes list after submission (action: ${formAction}, status: ${createRes.status})`;
-
-  const responseSnippet = createHtml.slice(0, 3000);
+  // Extract the toast error message
+  const toastMatch = createHtml.match(/<div[^>]+flex-1[^>]*>\s*([^<]{5,}?)\s*<\/div>/i);
+  const errMsg = toastMatch
+    ? toastMatch[1].trim()
+    : `Submission returned status ${createRes.status} but no success message`;
 
   return {
     success: false,
     message: `Node claim failed: ${errMsg}`,
-    debug: `body=${createBody.toString()} action=${formAction} postStatus=${createRes.status} responseSnippet=${responseSnippet}`,
+    debug: `action=${formAction} postStatus=${createRes.status}`,
   };
 }
 
@@ -309,7 +301,7 @@ Deno.serve(async (req) => {
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { node_token } = await req.json().catch(() => ({}));
+  const { node_token, node_name } = await req.json().catch(() => ({}));
   if (!node_token) {
     return Response.json({ error: 'node_token is required' }, { status: 400 });
   }
@@ -325,7 +317,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const result = await claimNodeOnCube(node_token, email, password);
+    const result = await claimNodeOnCube(node_token, email, password, node_name || node_token.slice(-6).toUpperCase());
     return Response.json(result);
   } catch (err: any) {
     return Response.json({ success: false, message: `Unexpected error: ${err.message}` }, { status: 500 });

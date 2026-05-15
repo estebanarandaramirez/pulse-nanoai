@@ -78,6 +78,21 @@ Deno.serve(async (req) => {
       console.error('Node assignment failed:', e.message);
     }
 
+    // Auto-claim the node on cube.octa.computer so it appears in the dashboard
+    let claimResult: any = null;
+    if (nodeToken) {
+      try {
+        const claimRes = await base44.functions.invoke('autoClaimOctaNode', {
+          node_token: nodeToken,
+          node_name: gpu.gpu_id,
+        });
+        claimResult = claimRes.data;
+      } catch (e: any) {
+        console.error('autoClaimOctaNode failed:', e.message);
+        claimResult = { success: false, message: e.message };
+      }
+    }
+
     return Response.json({
       success: true,
       gpu_id: gpu.gpu_id,
@@ -91,6 +106,7 @@ Deno.serve(async (req) => {
       daily_est_usd: parseFloat((userRateHr * 24 * 0.9).toFixed(2)),
       monthly_est_usd: parseFloat((userRateHr * 24 * 0.9 * 30).toFixed(2)),
       node: nodeInfo,
+      cube_claim: claimResult,
       message: `GPU registered on OctaSpace via Pulse. Earning $${userRateHr}/hr (60% of $${ratePerHour}/hr est. gross).`,
     });
   } catch (error: any) {
