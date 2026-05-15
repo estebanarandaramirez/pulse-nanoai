@@ -12,9 +12,11 @@ import StatusTag from "../components/shared/StatusTag";
 // ─── Cache helpers (localStorage, 5-min TTL) ────────────────────────────────
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+const CACHE_VERSION = 'v3';
+
 function readCache(key) {
   try {
-    const raw = localStorage.getItem(`dash:${key}`);
+    const raw = localStorage.getItem(`dash:${key}:${CACHE_VERSION}`);
     if (!raw) return { data: null, stale: true };
     const { data, ts } = JSON.parse(raw);
     return { data, stale: Date.now() - ts > CACHE_TTL_MS, ts };
@@ -22,7 +24,7 @@ function readCache(key) {
 }
 
 function writeCache(key, data) {
-  try { localStorage.setItem(`dash:${key}`, JSON.stringify({ data, ts: Date.now() })); } catch {}
+  try { localStorage.setItem(`dash:${key}:${CACHE_VERSION}`, JSON.stringify({ data, ts: Date.now() })); } catch {}
 }
 
 // ─── Static OctaSpace market rates (no live endpoint available) ─────────────
