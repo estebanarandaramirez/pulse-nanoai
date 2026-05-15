@@ -112,10 +112,14 @@ async function claimNodeOnCube(
   jar.ingest(signInRaw.headers); // ← captures the authenticated session cookie from 302
 
   const location = signInRaw.headers.get('location') ?? '';
-  if (signInRaw.status >= 400 || location.includes('/users/sign_in')) {
+  const signInStatus = signInRaw.status;
+
+  // A successful Devise sign-in always does 302 to a non-login URL
+  if (signInStatus >= 400 || signInStatus === 200 || location.includes('/users/sign_in') || !location) {
     return {
       success: false,
       message: 'cube.octa.computer sign-in failed — check OCTASPACE_WEB_EMAIL and OCTASPACE_WEB_PASSWORD env vars',
+      debug: `signInStatus=${signInStatus} location=${location} csrfFound=${!!signInCsrf}`,
     };
   }
 
@@ -131,6 +135,7 @@ async function claimNodeOnCube(
     return {
       success: false,
       message: 'cube.octa.computer sign-in failed — check OCTASPACE_WEB_EMAIL and OCTASPACE_WEB_PASSWORD env vars',
+      debug: `redirectedBackToSignIn=true redirectTarget=${redirectTarget}`,
     };
   }
 
@@ -146,7 +151,11 @@ async function claimNodeOnCube(
   jar.ingest(newNodeRes.headers);
 
   if (newNodeRes.url.includes('/users/sign_in')) {
-    return { success: false, message: 'Redirected to sign-in when accessing Add Node — session not established' };
+    return {
+      success: false,
+      message: 'Redirected to sign-in when accessing Add Node — session not established',
+      debug: `finalSignInUrl=${signInRes.url} cookieCount=${jar.toString().split(';').length}`,
+    };
   }
 
   const newNodeHtml = await newNodeRes.text();
@@ -177,9 +186,6 @@ async function claimNodeOnCube(
   const createHtml = await createRes.text();
 
   // ── Step 5: Verify by fetching the nodes list ─────────────────────────────────
-  // Redirect away from /new is not a reliable success signal — Rails can redirect
-  // to the index with an error flash. The only ground truth is whether the token
-  // now appears in the nodes list.
   const listRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
     redirect: 'follow',
     headers: {
@@ -195,9 +201,7 @@ async function claimNodeOnCube(
     return { success: true, message: `Node token ${token} claimed on cube.octa.computer` };
   }
 
-  // Token not in list — extract the error from whichever page we landed on
-  const errorSource = createRes.url.includes('/new') ? createHtml : createHtml;
-  const errMatch = errorSource.match(
+  const errMatch = createHtml.match(
     /<[^>]+class="[^"]*(?:alert|flash|error|notice)[^"]*"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{5,})/i,
   );
   const errMsg = errMatch
@@ -207,7 +211,7 @@ async function claimNodeOnCube(
   return {
     success: false,
     message: `Node claim failed: ${errMsg}`,
-    debug: `tokenField=${tokenField} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url}`,
+    debug: `step2Status=${signInStatus} step3Url=${newNodeRes.url} csrfFound=${!!newNodeCsrf} tokenField=${tokenField} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url}`,
   };
 }
 
