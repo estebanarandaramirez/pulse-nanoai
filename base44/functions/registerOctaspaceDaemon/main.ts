@@ -9,8 +9,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
-// OctaSpace doesn't expose a provider-side earnings API yet, so we estimate
-// rates based on VRAM tier. These can be updated as market data becomes available.
 function estimateGrossRate(vramGb: number): number {
   if (vramGb >= 80) return 1.50;
   if (vramGb >= 40) return 0.80;
@@ -46,12 +44,13 @@ Deno.serve(async (req) => {
   const gpu_id = `OCTA-${gpu_model.replace(/[^a-zA-Z0-9]/g, '')}-${suffix}`;
 
   try {
-    // Check for existing GPU record: match on node token if provided, else user+model+platform
-    const existingQuery = nodeToken
-      ? supabase.from('gpus').select('*').eq('user_email', user.email).eq('octa_node_token', nodeToken)
-      : supabase.from('gpus').select('*').eq('user_email', user.email).eq('model', gpu_model).eq('active_platform', 'OctaSpace');
-
-    const { data: existing } = await existingQuery;
+    // Deduplicate by user + model + platform
+    const { data: existing } = await supabase
+      .from('gpus')
+      .select('*')
+      .eq('user_email', user.email)
+      .eq('model', gpu_model)
+      .eq('active_platform', platform);
 
     let gpuRecord: any;
     if (existing && existing.length > 0) {
@@ -61,8 +60,6 @@ Deno.serve(async (req) => {
           last_heartbeat: new Date().toISOString(),
           status: 'active',
           rate_per_hour: userRateHr,
-          active_platform: platform,
-          ...(nodeToken ? { octa_node_token: nodeToken } : {}),
         })
         .eq('id', existing[0].id)
         .select()
@@ -83,7 +80,6 @@ Deno.serve(async (req) => {
           location: location || 'Unknown',
           last_heartbeat: new Date().toISOString(),
           user_email: user.email,
-          octa_node_token: nodeToken,
           active_platform: platform,
         })
         .select()
