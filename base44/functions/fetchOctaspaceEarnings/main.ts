@@ -86,9 +86,12 @@ Deno.serve(async (req) => {
     });
   }
 
+  const rawKeys = Array.isArray(nodesData) ? `array[${nodesData.length}]` : Object.keys(nodesData).join(', ');
+  const rawSnippet = JSON.stringify(nodesData).slice(0, 600);
+
   const nodes: any[] = Array.isArray(nodesData)
     ? nodesData
-    : (nodesData.data ?? nodesData.nodes ?? []);
+    : (nodesData.data ?? nodesData.nodes ?? nodesData.items ?? nodesData.results ?? []);
 
   // ── Balance ──────────────────────────────────────────────────────────────────
   let balanceOcta = 0;
@@ -130,5 +133,6 @@ Deno.serve(async (req) => {
     nodes: nodeList,
     market_rates: [],
     last_fetched: new Date().toISOString(),
+    _debug: { workingBase, rawKeys, rawSnippet },
   });
 });
