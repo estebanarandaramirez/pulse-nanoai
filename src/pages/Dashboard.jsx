@@ -80,10 +80,12 @@ export default function Dashboard() {
   const [octaStale, setOctaStale]     = useState(false);
 
   // ── Data loaders (cache-first) ───────────────────────────────────────────────
+  const isErrorResponse = (data) => !!(data?.error || data?.note);
+
   const loadClore = useCallback(async (force = false) => {
     if (!force) {
       const cached = readCache('clore');
-      if (cached.data) {
+      if (cached.data && !isErrorResponse(cached.data)) {
         setCloreData(cached.data);
         setCloreStale(cached.stale);
         if (!cached.stale) return; // fresh — no network call
@@ -94,8 +96,10 @@ export default function Dashboard() {
       const res = await base44.functions.invoke("fetchCloreaiEarnings", {});
       if (res.data) {
         setCloreData(res.data);
-        setCloreStale(false);
-        writeCache('clore', res.data);
+        if (!isErrorResponse(res.data)) {
+          setCloreStale(false);
+          writeCache('clore', res.data);
+        }
       }
     } catch {}
     setCloreLoading(false);
@@ -104,7 +108,7 @@ export default function Dashboard() {
   const loadOcta = useCallback(async (force = false) => {
     if (!force) {
       const cached = readCache('octa');
-      if (cached.data) {
+      if (cached.data && !isErrorResponse(cached.data)) {
         setOctaData(cached.data);
         setOctaStale(cached.stale);
         if (!cached.stale) return;
@@ -115,8 +119,10 @@ export default function Dashboard() {
       const res = await base44.functions.invoke("fetchOctaspaceEarnings", {});
       if (res.data) {
         setOctaData(res.data);
-        setOctaStale(false);
-        writeCache('octa', res.data);
+        if (!isErrorResponse(res.data)) {
+          setOctaStale(false);
+          writeCache('octa', res.data);
+        }
       }
     } catch {}
     setOctaLoading(false);
