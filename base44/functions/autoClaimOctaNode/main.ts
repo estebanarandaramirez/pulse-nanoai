@@ -243,6 +243,10 @@ async function claimNodeOnCube(
   // Build body from form hidden inputs + selects, then add fields the browser
   // sets via JavaScript (data_center_type radio, name text input, commit button)
   const createBody = extractFormBody(newNodeHtml, formAction, { field: 'node[token]', value: token });
+  // Remove data_center_attributes — those are for creating a NEW DC, not selecting one
+  for (const key of [...createBody.keys()]) {
+    if (key.startsWith('node[data_center_attributes]')) createBody.delete(key);
+  }
   createBody.set('data_center_type', 'own');   // "Select" radio — always use existing DC
   createBody.set('node[name]', '');            // optional name field
   createBody.set('commit', 'Create');
