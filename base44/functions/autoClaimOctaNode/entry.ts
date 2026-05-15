@@ -247,10 +247,11 @@ async function claimNodeOnCube(
   for (const key of [...createBody.keys()]) {
     if (key.startsWith('node[data_center_attributes]')) createBody.delete(key);
   }
-  createBody.set('data_center_type', 'own');   // "Select" radio — always use existing DC
-  createBody.set('node[name]', '');            // optional name field
+  createBody.set('data_center_type', 'own');
+  createBody.set('node[name]', 'AutoNode');
   createBody.set('commit', 'Create');
 
+  const turboReqId = crypto.randomUUID();
   const createRes = await fetch(formAction, {
     method: 'POST',
     redirect: 'follow',
@@ -263,6 +264,10 @@ async function claimNodeOnCube(
       'Origin': CUBE_BASE,
       'Turbo-Frame': 'modal',
       'X-CSRF-Token': newNodeCsrf,
+      'X-Turbo-Request-Id': turboReqId,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
     },
     body: createBody.toString(),
   });
