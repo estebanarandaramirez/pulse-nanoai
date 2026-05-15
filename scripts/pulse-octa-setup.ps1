@@ -288,30 +288,32 @@ function Invoke-Phase2 {
     Register-Step "Auto-start task"
     Register-Step "Auto-login"
 
-    Write-Log "Setting up Ubuntu on WSL2..."
-    $distros = wsl --list --quiet 2>&1
-    if ($distros -notmatch "Ubuntu-22.04") {
-        Write-Log "Downloading Ubuntu..."
+    Write-Log "Setting up Ubuntu-22.04 on WSL2..."
+    # Test the distro directly — wsl --list --quiet outputs UTF-16 which can corrupt string matching
+    $distroOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1) -match "ok"
+    if (-not $distroOk) {
+        wsl --unregister Ubuntu-22.04 2>&1 | Out-Null
+        Write-Log "Downloading Ubuntu-22.04..."
         wsl --install -d Ubuntu-22.04 --no-launch 2>&1 | Out-Null
 
-        Write-Log "Initializing Ubuntu headlessly (no GUI required)..."
-        $ubuntuExe = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps" -Filter "ubuntu*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        Write-Log "Initializing Ubuntu-22.04 headlessly (no GUI required)..."
+        $ubuntuExe = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps" -Filter "ubuntu2204*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $ubuntuExe) {
+            $ubuntuExe = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps" -Filter "ubuntu*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
         if ($ubuntuExe) {
             & $ubuntuExe.FullName install --root 2>&1 | Out-Null
-        } else {
-            wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-Null
         }
         Start-Sleep 5
 
         $check = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
         if ($check -notmatch "ok") {
-            Write-Log "Ubuntu root access failed — re-run installer." "ERROR"
+            Write-Log "Ubuntu-22.04 root access failed — re-run installer." "ERROR"
             Show-Diagnostics; Wait-ForKey; exit 1
         }
-
-        Write-Log "Ubuntu installed and initialized" "OK"
+        Write-Log "Ubuntu-22.04 installed and initialized" "OK"
     } else {
-        Write-Log "Ubuntu already present" "OK"
+        Write-Log "Ubuntu-22.04 already present and working" "OK"
     }
     Set-Step "Ubuntu on WSL2" "PASS"
 
