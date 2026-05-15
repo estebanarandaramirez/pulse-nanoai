@@ -45,15 +45,6 @@ function extractCsrf(html: string): string {
   return m ? m[1] : '';
 }
 
-function extractTokenField(html: string): string {
-  // Only match <input> elements whose name contains "token" (not authenticity_token)
-  const matches = [...html.matchAll(/<input[^>]+name=["']([^"']*token[^"']*)["']/gi)];
-  for (const m of matches) {
-    if (!m[1].includes('authenticity')) return m[1];
-  }
-  return 'node[token]';
-}
-
 function extractFormAction(html: string, fallback: string): string {
   // Match only the HTML action= attribute (not data-action= or similar)
   const forms = [...html.matchAll(/<form[^>]+\saction=["']([^"']+)["']/gi)];
@@ -62,6 +53,30 @@ function extractFormAction(html: string, fallback: string): string {
     if (!action.includes('sign_out') && !action.includes('sign_in')) return action;
   }
   return fallback;
+}
+
+// Extract ALL form fields (hidden inputs + first select option) so we don't miss required fields
+function extractFormBody(html: string, tokenOverride: { field: string; value: string }): URLSearchParams {
+  const body = new URLSearchParams();
+
+  // Hidden inputs (includes authenticity_token and any other hidden fields)
+  for (const m of html.matchAll(/<input[^>]+type=["']hidden["'][^>]*>/gi)) {
+    const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1];
+    const value = m[0].match(/\svalue=["']([^"']*)["']/i)?.[1] ?? '';
+    if (name) body.set(name, value);
+  }
+
+  // Select elements — pick the first non-empty option value
+  for (const sel of html.matchAll(/<select[^>]+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/select>/gi)) {
+    const name = sel[1];
+    const firstOption = [...sel[2].matchAll(/<option[^>]+value=["']([^"']+)["']/gi)][0];
+    if (firstOption) body.set(name, firstOption[1]);
+  }
+
+  // Override with the actual node token
+  body.set(tokenOverride.field, tokenOverride.value);
+
+  return body;
 }
 
 async function claimNodeOnCube(
@@ -199,8 +214,7 @@ async function claimNodeOnCube(
 
   const newNodeHtml = await newNodeRes.text();
   const newNodeCsrf = extractCsrf(newNodeHtml);
-  const tokenField = extractTokenField(newNodeHtml);
-  const formAction = extractFormAction(newNodeHtml, `${CUBE_BASE}/hosting/nodes`);
+  const formAction = extractFormAction(newNodeHtml, `${CUBE_BASE}/nodes`);
 
   if (!newNodeCsrf) {
     const snippet = newNodeHtml.replace(/<script[\s\S]*?<\/script>/gi, '').slice(0, 1500);
@@ -212,11 +226,13 @@ async function claimNodeOnCube(
   }
 
   // ── Step 5: POST the node token ───────────────────────────────────────────────
-  const createBody = new URLSearchParams({
-    'authenticity_token': newNodeCsrf,
-    [tokenField]: token,
-    'commit': 'Add Node',
-  });
+  // Build body from ALL form fields (picks up data_center_id, etc.) then override token
+  const tokenField = (() => {
+    const m = [...newNodeHtml.matchAll(/<input[^>]+name=["']([^"']*token[^"']*)["']/gi)];
+    for (const r of m) { if (!r[1].includes('authenticity')) return r[1]; }
+    return 'node[token]';
+  })();
+  const createBody = extractFormBody(newNodeHtml, { field: tokenField, value: token });
 
   const createRes = await fetch(formAction, {
     method: 'POST',
@@ -257,7 +273,7 @@ async function claimNodeOnCube(
   return {
     success: false,
     message: `Node claim failed: ${errMsg}`,
-    debug: `addNodeUrl=${addNodeUrl} csrfFound=${!!newNodeCsrf} tokenField=${tokenField} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url} responseSnippet=${responseSnippet}`,
+    debug: `addNodeUrl=${addNodeUrl} csrfFound=${!!newNodeCsrf} tokenField=${tokenField} formFields=${[...createBody.keys()].join(',')} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url} responseSnippet=${responseSnippet}`,
   };
 }
 
