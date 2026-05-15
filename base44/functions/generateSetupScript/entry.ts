@@ -219,15 +219,20 @@ function Invoke-Phase2 {
         Write-Log "Ubuntu 22.04 already present" "OK"
     }
 
-    # Verify root access works (first launch may need OOBE on some machines)
+    # Initialize Ubuntu headlessly — use ubuntu2204.exe install --root to bypass OOBE
     $rootOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-String) -match "ok"
     if (-not $rootOk) {
-        Write-Host "  Ubuntu needs first-time user setup. Create a username/password, then close the window." -ForegroundColor Yellow
-        Start-Process wsl.exe -ArgumentList "-d Ubuntu-22.04" -Wait
+        Write-Log "Running Ubuntu headless init (no GUI required)..."
+        $ubuntuExe = Get-ChildItem "$env:LOCALAPPDATA\\Microsoft\\WindowsApps" -Filter "ubuntu*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($ubuntuExe) {
+            & $ubuntuExe.FullName install --root 2>&1 | Out-Null
+        } else {
+            wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-Null
+        }
         Start-Sleep 5
         $rootOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1 | Out-String) -match "ok"
         if (-not $rootOk) {
-            Write-Log "Cannot access Ubuntu 22.04 as root after setup — re-run installer." "ERROR"
+            Write-Log "Cannot access Ubuntu 22.04 as root — re-run installer." "ERROR"
             Wait-ForKey; exit 1
         }
     }
