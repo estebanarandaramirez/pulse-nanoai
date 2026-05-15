@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, Trash2
+  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, Trash2, ChevronDown
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
@@ -68,6 +68,7 @@ export default function Dashboard() {
   const [myNode, setMyNode] = useState(null);
   const [gpusLoading, setGpusLoading] = useState(true);
   const [deletingGpu, setDeletingGpu] = useState(null);
+  const [gpusOpen, setGpusOpen] = useState(true);
 
   // ── Platform data ────────────────────────────────────────────────────────────
   const [cloreData, setCloreData]     = useState(null);
@@ -270,6 +271,90 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ── My GPUs — accordion, all platforms ── */}
+      <div className="bg-card border border-border rounded-md overflow-hidden relative card-gradient-top">
+        <button
+          onClick={() => setGpusOpen(o => !o)}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/20 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <SectionTitle>My GPUs</SectionTitle>
+            {!gpusLoading && myGPUs.length > 0 && (
+              <span className="text-[9px] font-mono text-muted-foreground">
+                {activeGPUs.length} active · {myGPUs.length} total
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[9px] font-mono text-muted-foreground">all platforms · pulse registered</span>
+            <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${gpusOpen ? "rotate-180" : ""}`} />
+          </div>
+        </button>
+
+        {gpusOpen && (
+          gpusLoading ? (
+            <div className="p-8 text-center text-[10px] font-mono text-muted-foreground border-t border-border">Loading...</div>
+          ) : myGPUs.length === 0 ? (
+            <div className="p-8 text-center border-t border-border">
+              <Cpu className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+              <div className="text-[11px] font-mono text-muted-foreground mb-3">No GPUs registered yet.</div>
+              <a href="/connect" className="px-4 py-2 bg-cyan/10 border border-cyan/40 text-cyan text-[10px] font-mono rounded-md hover:border-cyan transition-colors">
+                Connect a GPU →
+              </a>
+            </div>
+          ) : (
+            <div className="overflow-x-auto border-t border-border">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    {["Model", "Status", "Rate/hr", "Uptime", "Platform", "Earned", ""].map((h, i) => (
+                      <th key={i} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {myGPUs.map(g => (
+                    <tr key={g.gpu_id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                      <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{g.model}</td>
+                      <td className="px-4 py-2.5"><StatusTag status={g.status} /></td>
+                      <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">${(g.rate_per_hour || 0).toFixed(3)}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1 w-16 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{
+                              width: `${g.uptime_percent || 0}%`,
+                              background: (g.uptime_percent || 0) > 90
+                                ? "var(--neon-green)"
+                                : (g.uptime_percent || 0) > 70 ? "var(--amber)" : "var(--pulse-red)"
+                            }} />
+                          </div>
+                          <span className="text-[10px] font-mono text-muted-foreground">{g.uptime_percent || 0}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{g.active_platform || "—"}</td>
+                      <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.total_earned_usd || 0).toFixed(2)}</td>
+                      <td className="px-4 py-2.5">
+                        <button
+                          onClick={() => handleDeleteGpu(g)}
+                          disabled={deletingGpu === g.gpu_id}
+                          className="text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-30"
+                          title="Remove from Pulse"
+                        >
+                          {deletingGpu === g.gpu_id
+                            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />
+                          }
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </div>
+
       {/* ── Full-width platform toggle ── */}
       <div className="grid grid-cols-2 bg-card border border-border rounded-md overflow-hidden">
         {PLATFORMS.map(p => (
@@ -450,74 +535,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── My GPUs — all platforms, Pulse-registered ── */}
-      <div className="bg-card border border-border rounded-md overflow-hidden relative card-gradient-top">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <SectionTitle>My GPUs</SectionTitle>
-          <span className="text-[9px] font-mono text-muted-foreground">all platforms · pulse registered</span>
-        </div>
-
-        {gpusLoading ? (
-          <div className="p-8 text-center text-[10px] font-mono text-muted-foreground">Loading...</div>
-        ) : myGPUs.length === 0 ? (
-          <div className="p-8 text-center">
-            <Cpu className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-            <div className="text-[11px] font-mono text-muted-foreground mb-3">No GPUs registered yet.</div>
-            <a href="/connect" className="px-4 py-2 bg-cyan/10 border border-cyan/40 text-cyan text-[10px] font-mono rounded-md hover:border-cyan transition-colors">
-              Connect a GPU →
-            </a>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  {["Model", "Status", "Rate/hr", "Uptime", "Platform", "Earned", ""].map((h, i) => (
-                    <th key={i} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {myGPUs.map(g => (
-                  <tr key={g.gpu_id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{g.model}</td>
-                    <td className="px-4 py-2.5"><StatusTag status={g.status} /></td>
-                    <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">${(g.rate_per_hour || 0).toFixed(3)}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1 w-16 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full rounded-full" style={{
-                            width: `${g.uptime_percent || 0}%`,
-                            background: (g.uptime_percent || 0) > 90
-                              ? "var(--neon-green)"
-                              : (g.uptime_percent || 0) > 70 ? "var(--amber)" : "var(--pulse-red)"
-                          }} />
-                        </div>
-                        <span className="text-[10px] font-mono text-muted-foreground">{g.uptime_percent || 0}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{g.active_platform || "—"}</td>
-                    <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.total_earned_usd || 0).toFixed(2)}</td>
-                    <td className="px-4 py-2.5">
-                      <button
-                        onClick={() => handleDeleteGpu(g)}
-                        disabled={deletingGpu === g.gpu_id}
-                        className="text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-30"
-                        title="Remove from Pulse"
-                      >
-                        {deletingGpu === g.gpu_id
-                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />
-                        }
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
 
     </div>
   );

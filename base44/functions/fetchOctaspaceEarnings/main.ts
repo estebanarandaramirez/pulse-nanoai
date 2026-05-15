@@ -33,6 +33,7 @@ Deno.serve(async (req) => {
 
   const headers = {
     'Authorization': apiKey,
+    'Accept': 'application/json',
     'Content-Type': 'application/json',
   };
 
