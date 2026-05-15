@@ -284,12 +284,12 @@ async function claimNodeOnCube(
     ? errMatch[1].trim()
     : `Token not found in nodes list after submission (action: ${formAction}, status: ${createRes.status})`;
 
-  const responseSnippet = createHtml.replace(/<script[\s\S]*?<\/script>/gi, '').slice(0, 800);
+  const responseSnippet = createHtml.slice(0, 3000);
 
   return {
     success: false,
     message: `Node claim failed: ${errMsg}`,
-    debug: `addNodeUrl=${addNodeUrl} csrfFound=${!!newNodeCsrf} formFields=${[...createBody.keys()].join(',')} action=${formAction} postStatus=${createRes.status} postUrl=${createRes.url} responseSnippet=${responseSnippet}`,
+    debug: `body=${createBody.toString()} action=${formAction} postStatus=${createRes.status} responseSnippet=${responseSnippet}`,
   };
 }
 
