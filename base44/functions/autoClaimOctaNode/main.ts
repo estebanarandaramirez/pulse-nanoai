@@ -94,9 +94,12 @@ async function claimNodeOnCube(
     'commit': 'Log in',
   });
 
-  const signInRes = await fetch(`${CUBE_BASE}/users/sign_in`, {
+  // Use redirect: 'manual' so we capture the Set-Cookie on the 302 response
+  // before following the redirect. With redirect: 'follow', Deno silently drops
+  // the 302 response headers (including the authenticated session cookie).
+  const signInRaw = await fetch(`${CUBE_BASE}/users/sign_in`, {
     method: 'POST',
-    redirect: 'follow',
+    redirect: 'manual',
     headers: {
       ...commonHeaders,
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -106,15 +109,25 @@ async function claimNodeOnCube(
     },
     body: signInBody.toString(),
   });
+  jar.ingest(signInRaw.headers); // ← captures the authenticated session cookie from 302
+
+  const location = signInRaw.headers.get('location') ?? '';
+  if (signInRaw.status >= 400 || location.includes('/users/sign_in')) {
+    return {
+      success: false,
+      message: 'cube.octa.computer sign-in failed — check OCTASPACE_WEB_EMAIL and OCTASPACE_WEB_PASSWORD env vars',
+    };
+  }
+
+  // Follow the redirect manually to pick up any additional cookies
+  const redirectTarget = location.startsWith('http') ? location : `${CUBE_BASE}${location}`;
+  const signInRes = await fetch(redirectTarget, {
+    redirect: 'follow',
+    headers: { ...commonHeaders, 'Cookie': jar.toString() },
+  });
   jar.ingest(signInRes.headers);
-  const signInHtml = await signInRes.text();
 
-  // Check for sign-in failure — Devise stays on /users/sign_in and shows an error
-  const signInFailed = signInRes.url.includes('/users/sign_in')
-    || /invalid.*email.*password|invalid.*password/i.test(signInHtml)
-    || /alert.*error|error.*alert/i.test(signInHtml);
-
-  if (signInFailed) {
+  if (signInRes.url.includes('/users/sign_in')) {
     return {
       success: false,
       message: 'cube.octa.computer sign-in failed — check OCTASPACE_WEB_EMAIL and OCTASPACE_WEB_PASSWORD env vars',
