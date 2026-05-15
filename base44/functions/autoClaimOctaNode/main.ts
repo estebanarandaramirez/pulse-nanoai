@@ -46,19 +46,22 @@ function extractCsrf(html: string): string {
 }
 
 function extractTokenField(html: string): string {
-  // Find the input field whose name contains "token" (but not authenticity_token)
-  const matches = [...html.matchAll(/name=["']([^"']*token[^"']*)["']/gi)];
+  // Only match <input> elements whose name contains "token" (not authenticity_token)
+  const matches = [...html.matchAll(/<input[^>]+name=["']([^"']*token[^"']*)["']/gi)];
   for (const m of matches) {
     if (!m[1].includes('authenticity')) return m[1];
   }
-  // Rails convention for Hosting::Node model → hosting_node[token]
-  return 'hosting_node[token]';
+  return 'node[token]';
 }
 
 function extractFormAction(html: string, fallback: string): string {
-  const m = html.match(/<form[^>]+action=["']([^"']+)["']/i);
-  if (!m) return fallback;
-  return m[1].startsWith('http') ? m[1] : `${CUBE_BASE}${m[1]}`;
+  // Find all forms; skip sign_out / sign_in navigation forms
+  const forms = [...html.matchAll(/<form[^>]+action=["']([^"']+)["']/gi)];
+  for (const m of forms) {
+    const action = m[1].startsWith('http') ? m[1] : `${CUBE_BASE}${m[1]}`;
+    if (!action.includes('sign_out') && !action.includes('sign_in')) return action;
+  }
+  return fallback;
 }
 
 async function claimNodeOnCube(
