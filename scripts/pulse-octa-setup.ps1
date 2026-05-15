@@ -377,17 +377,9 @@ function Invoke-Phase2 {
         $ubuntuVer = wsl -d Ubuntu --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
         $ubuntuVer = $ubuntuVer.Trim()
         if ($ubuntuVer -notin @("jammy","focal","noble")) { $ubuntuVer = "jammy" }
-        $rocmScript = @"
-set -e
-apt-get update -qq 2>&1 | tail -2
-apt-get install -y -qq wget gnupg ca-certificates 2>&1 | tail -2
-mkdir -p /etc/apt/keyrings
-wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
-echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 $ubuntuVer main' > /etc/apt/sources.list.d/rocm.list
-apt-get update -qq 2>&1 | tail -2
-apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
-"@
-        wsl -d Ubuntu --user root -- bash -c $rocmScript 2>&1 | ForEach-Object { Write-Log $_ }
+        $rocmScript = "set -e`nexport DEBIAN_FRONTEND=noninteractive`napt-get update -qq`napt-get install -y -qq wget gnupg ca-certificates`nmkdir -p /etc/apt/keyrings`nwget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg`necho 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 $ubuntuVer main' > /etc/apt/sources.list.d/rocm.list`napt-get update -qq`napt-get install -y -qq rocm-opencl-runtime"
+        # Pipe via stdin to avoid CRLF issues with bash -c on Windows
+        $rocmScript | wsl -d Ubuntu --user root -- bash 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -eq 0) {
             Write-Log "ROCm installed" "OK"
             Set-Step "GPU compute in WSL2" "PASS" "ROCm opencl-runtime installed — $gpuName"
@@ -398,12 +390,21 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     }
 
     # ── Install OctaSpace node (osn) inside WSL2 ─────────────────────────────
-    Write-Log "Installing build tools required by osn installer (curl, bash)..."
-    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -2 && apt-get install -y -qq curl bash 2>&1 | tail -3" 2>&1 | ForEach-Object { Write-Log $_ }
+    Write-Log "Installing osn prerequisites (curl, bash, gum)..."
+    wsl -d Ubuntu --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq curl bash" 2>&1 | ForEach-Object { Write-Log $_ }
     if ($LASTEXITCODE -eq 0) {
         Set-Step "Build tools (curl, bash)" "PASS"
     } else {
         Set-Step "Build tools (curl, bash)" "WARN" "apt-get exit $LASTEXITCODE — osn installer will attempt to continue anyway"
+    }
+
+    Write-Log "Installing gum (required by OctaSpace installer)..."
+    $gumInstall = "export DEBIAN_FRONTEND=noninteractive && mkdir -p /etc/apt/keyrings && curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg && echo 'deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *' | tee /etc/apt/sources.list.d/charm.list > /dev/null && apt-get update -qq && apt-get install -y -qq gum"
+    wsl -d Ubuntu --user root -- bash -c $gumInstall 2>&1 | ForEach-Object { Write-Log $_ }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "gum install failed — OctaSpace installer may fail" "WARN"
+    } else {
+        Write-Log "gum installed" "OK"
     }
 
     Write-Log "Installing OctaSpace node (osn) inside WSL2..."
