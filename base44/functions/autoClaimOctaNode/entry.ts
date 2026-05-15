@@ -55,23 +55,31 @@ function extractFormAction(html: string, fallback: string): string {
   return fallback;
 }
 
-// Extract ALL form fields (hidden inputs + first select option) so we don't miss required fields
-function extractFormBody(html: string, tokenOverride: { field: string; value: string }): URLSearchParams {
+// Extract form fields scoped to the specific form whose action matches formAction
+function extractFormBody(html: string, formAction: string, tokenOverride: { field: string; value: string }): URLSearchParams {
   const body = new URLSearchParams();
 
-  // Hidden inputs (includes authenticity_token and any other hidden fields)
-  for (const m of html.matchAll(/<input[^>]+type=["']hidden["'][^>]*>/gi)) {
+  // Isolate the specific form by its action attribute
+  const actionPath = formAction.replace(CUBE_BASE, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const formChunkMatch = html.match(new RegExp(`<form[^>]+\\saction=["'](?:${CUBE_BASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})?${actionPath}["'][\\s\\S]*?<\\/form>`, 'i'));
+  const scope = formChunkMatch ? formChunkMatch[0] : html;
+
+  // Hidden inputs from this form only
+  for (const m of scope.matchAll(/<input[^>]+type=["']hidden["'][^>]*>/gi)) {
     const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1];
     const value = m[0].match(/\svalue=["']([^"']*)["']/i)?.[1] ?? '';
     if (name) body.set(name, value);
   }
 
-  // Select elements — pick the first non-empty option value
-  for (const sel of html.matchAll(/<select[^>]+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/select>/gi)) {
+  // Select elements from this form — pick first non-empty option
+  for (const sel of scope.matchAll(/<select[^>]+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/select>/gi)) {
     const name = sel[1];
     const firstOption = [...sel[2].matchAll(/<option[^>]+value=["']([^"']+)["']/gi)][0];
     if (firstOption) body.set(name, firstOption[1]);
   }
+
+  // Remove _method if it's not POST (don't accidentally send PATCH/DELETE)
+  if ((body.get('_method') ?? '').toLowerCase() !== 'post') body.delete('_method');
 
   // Override with the actual node token
   body.set(tokenOverride.field, tokenOverride.value);
@@ -232,7 +240,7 @@ async function claimNodeOnCube(
     for (const r of m) { if (!r[1].includes('authenticity')) return r[1]; }
     return 'node[token]';
   })();
-  const createBody = extractFormBody(newNodeHtml, { field: tokenField, value: token });
+  const createBody = extractFormBody(newNodeHtml, formAction, { field: tokenField, value: token });
 
   const createRes = await fetch(formAction, {
     method: 'POST',
