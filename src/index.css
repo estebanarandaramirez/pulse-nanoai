@@ -62,7 +62,6 @@ input[type=number] {
 
   body {
     font-family: 'JetBrains Mono', monospace;
-    scrollbar-gutter: stable;
     @apply bg-background text-foreground;
   }
 }
