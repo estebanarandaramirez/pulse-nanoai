@@ -1,15 +1,14 @@
 /**
  * registerOctaspaceDaemon
  * Called by pulse-octa-setup.bat after OctaSpace OSN installation.
- * Creates or updates the GPU record and stores the node token so
+ * Creates or updates the GPU record in Supabase and stores the node token so
  * the Pulse dashboard can track this machine's earnings.
  *
  * Input: { gpu_model, vram_gb, octa_node_token, platform }
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
-// OctaSpace doesn't expose a provider-side earnings API yet, so we estimate
-// rates based on VRAM tier. These can be updated as market data becomes available.
 function estimateGrossRate(vramGb: number): number {
   if (vramGb >= 80) return 1.50;
   if (vramGb >= 40) return 0.80;
@@ -23,6 +22,13 @@ Deno.serve(async (req) => {
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) {
+    return Response.json({ error: 'Supabase not configured' }, { status: 500 });
+  }
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
   const body = await req.json();
   const { gpu_model, vram_gb, octa_node_token, platform = 'OctaSpace', location } = body;
 
@@ -35,56 +41,62 @@ Deno.serve(async (req) => {
   const userRateHr = parseFloat((ratePerHour * 0.6).toFixed(4));
   const nodeToken = octa_node_token?.toString().trim() ?? '';
   const suffix = nodeToken ? nodeToken.slice(-6).toUpperCase() : Math.random().toString(36).slice(2, 8).toUpperCase();
-  const gpu_id = `OCTA-${gpu_model.replace(/\s+/g, '')}-${suffix}`;
+  const gpu_id = `OCTA-${gpu_model.replace(/[^a-zA-Z0-9]/g, '')}-${suffix}`;
 
   try {
-    // Deduplicate: match on node token if provided, otherwise user+model+platform
-    const existing = nodeToken
-      ? await base44.entities.GPU.filter({ user_email: user.email, octa_node_token: nodeToken })
-      : await base44.entities.GPU.filter({ user_email: user.email, model: gpu_model, active_platform: 'OctaSpace' });
+    // Check for existing GPU: match on node token if provided, else user+model+platform
+    const existingQuery = nodeToken
+      ? supabase.from('gpus').select('*').eq('user_email', user.email).eq('octa_node_token', nodeToken)
+      : supabase.from('gpus').select('*').eq('user_email', user.email).eq('model', gpu_model).eq('active_platform', 'OctaSpace');
 
-    let gpu;
+    const { data: existing } = await existingQuery;
+
+    let gpuRecord: any;
     if (existing && existing.length > 0) {
-      gpu = await base44.entities.GPU.update(existing[0].id, {
-        last_heartbeat: new Date().toISOString(),
-        status: 'active',
-        rate_per_hour: userRateHr,
-        active_platform: platform,
-        ...(nodeToken ? { octa_node_token: nodeToken } : {}),
-      });
+      const { data: updated } = await supabase
+        .from('gpus')
+        .update({
+          last_heartbeat: new Date().toISOString(),
+          status: 'active',
+          rate_per_hour: userRateHr,
+          active_platform: platform,
+          ...(nodeToken ? { octa_node_token: nodeToken } : {}),
+        })
+        .eq('id', existing[0].id)
+        .select()
+        .single();
+      gpuRecord = updated ?? existing[0];
     } else {
-      gpu = await base44.entities.GPU.create({
-        gpu_id,
-        model: gpu_model,
-        vram_gb: vram,
-        status: 'active',
-        rate_per_hour: userRateHr,
-        uptime_percent: 100,
-        total_earned_usd: 0,
-        pls_minted: 0,
-        location: location || 'Unknown',
-        last_heartbeat: new Date().toISOString(),
-        user_email: user.email,
-        octa_node_token: nodeToken,
-        active_platform: platform,
-      });
+      const { data: created, error: createErr } = await supabase
+        .from('gpus')
+        .insert({
+          gpu_id,
+          model: gpu_model,
+          vram_gb: vram,
+          status: 'active',
+          rate_per_hour: userRateHr,
+          uptime_percent: 100,
+          total_earned_usd: 0,
+          pls_minted: 0,
+          location: location || 'Unknown',
+          last_heartbeat: new Date().toISOString(),
+          user_email: user.email,
+          octa_node_token: nodeToken,
+          active_platform: platform,
+        })
+        .select()
+        .single();
+      if (createErr) throw new Error(createErr.message);
+      gpuRecord = created;
     }
 
-    let nodeInfo: any = null;
-    try {
-      const nodeRes = await base44.functions.invoke('assignGPUToNode', { gpu_record_id: gpu.id });
-      nodeInfo = nodeRes.data;
-    } catch (e: any) {
-      console.error('Node assignment failed:', e.message);
-    }
-
-    // Auto-claim the node on cube.octa.computer so it appears in the dashboard
+    // Auto-claim the node on cube.octa.computer
     let claimResult: any = null;
     if (nodeToken) {
       try {
         const claimRes = await base44.functions.invoke('autoClaimOctaNode', {
           node_token: nodeToken,
-          node_name: gpu.gpu_id,
+          node_name: gpuRecord.gpu_id,
         });
         claimResult = claimRes.data;
       } catch (e: any) {
@@ -95,7 +107,7 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      gpu_id: gpu.gpu_id,
+      gpu_id: gpuRecord.gpu_id,
       gpu_model,
       vram_gb: vram,
       octa_node_token: nodeToken,
@@ -105,7 +117,6 @@ Deno.serve(async (req) => {
       pulse_share_pct: 40,
       daily_est_usd: parseFloat((userRateHr * 24 * 0.9).toFixed(2)),
       monthly_est_usd: parseFloat((userRateHr * 24 * 0.9 * 30).toFixed(2)),
-      node: nodeInfo,
       cube_claim: claimResult,
       message: `GPU registered on OctaSpace via Pulse. Earning $${userRateHr}/hr (60% of $${ratePerHour}/hr est. gross).`,
     });
