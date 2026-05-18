@@ -278,6 +278,8 @@ function Invoke-Phase2 {
     Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
     Register-Step "Build tools (curl, bash)" "wsl -d Ubuntu-22.04 -- bash -c 'apt-get update && apt-get install -y curl bash'"
     Register-Step "OctaSpace osn installed" "Check install.octa.space or OctaSpace docs"
+    Register-Step "HugePages cap (RAM fix)"
+    Register-Step "OSN disk alarm threshold"
     Register-Step "osn service started"
     Register-Step "OctaSpace node token"
     Register-Step "Windows Firewall rules"
@@ -420,6 +422,50 @@ function Invoke-Phase2 {
     }
     Write-Log "OctaSpace osn install complete" "OK"
     Set-Step "OctaSpace osn installed" "PASS"
+
+    # ── Stability Fix 1: cap NVIDIA HugePages ────────────────────────────────────
+    # NVIDIA's WSL2 driver locks HugePages proportional to available RAM — up to ~8GB
+    # on a 10GB WSL instance. Erlang's memsup fires a system_memory_high_watermark alarm
+    # when >80% RAM is used, causing OSN to call init:stop() ~15s after every startup.
+    Write-Log "Capping NVIDIA HugePages at 256 (512MB) to prevent RAM starvation..."
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo vm.nr_hugepages=256 > /etc/sysctl.d/90-wsl.conf && sysctl -p /etc/sysctl.d/90-wsl.conf" 2>&1 | ForEach-Object { Write-Log $_ }
+    Write-Log "HugePages capped — NVIDIA driver limited to 512MB kernel pages" "OK"
+    Set-Step "HugePages cap (RAM fix)" "PASS"
+
+    # ── Stability Fix 2: raise OSN disk alarm threshold ──────────────────────────
+    # OctaSpace's installer creates /docker-data.img (~763GB real file) for Docker storage,
+    # pushing the root filesystem to ~81%. Erlang's disksup fires a disk_almost_full alarm
+    # at 80% (the default) and causes OSN to self-terminate. Raising to 90% clears headroom.
+    Write-Log "Raising OSN disk alarm threshold from 80% to 90%..."
+    $diskFixScript = @'
+SYS_CFG=$(ls /home/octa/osn/releases/*/sys.config 2>/dev/null | grep -v RELEASES | head -1)
+if [ -z "$SYS_CFG" ]; then echo "sys.config not found"; exit 1; fi
+grep -q "disk_almost_full_threshold" "$SYS_CFG" && echo "already patched" && exit 0
+cat > "$SYS_CFG" << 'ERLEOF'
+[
+    {kernel, [
+        {logger_level, debug},
+        {logger, [
+            {handler, default, logger_std_h, #{
+                level => debug,
+                config => #{
+                    burst_limit_enable => false
+                },
+                formatter => {logger_formatter, #{template => [time, " ", msg, "\n"]}}
+            }}
+        ]}
+    ]},
+    {os_mon, [
+        {disk_almost_full_threshold, 0.90}
+    ]}
+].
+ERLEOF
+echo "patched"
+'@
+    $diskFixB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($diskFixScript))
+    $diskResult = wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$diskFixB64' | base64 -d | bash" 2>&1
+    Write-Log "Disk alarm threshold: $($diskResult -join ' ')" "OK"
+    Set-Step "OSN disk alarm threshold" "PASS"
 
     # Start the service so it can register and generate a node token
     Write-Log "Starting osn service..."
