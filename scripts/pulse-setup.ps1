@@ -285,6 +285,7 @@ function Invoke-Phase2 {
     Register-Step "GPU compute in WSL2" "Update Windows NVIDIA driver at nvidia.com/drivers"
     Register-Step "Build tools (gcc, python3-dev)" "wsl -d Ubuntu-22.04 -- bash -c 'apt-get update && apt-get install -y build-essential python3-dev'"
     Register-Step "Clore.ai host client" "Check gitlab.com/cloreai-public/hosting for install.sh status"
+    Register-Step "HugePages cap (RAM fix)"
     Register-Step "Clore fleet onboarding" "Re-download installer from Pulse dashboard to get a fresh fleet token"
     Register-Step "Clore server ID"
     Register-Step "Windows Firewall rules"
@@ -432,6 +433,16 @@ apt-get install -y -qq rocm-opencl-runtime 2>&1 | tail -5
     }
     Write-Log "Clore.ai install complete" "OK"
     Set-Step "Clore.ai host client" "PASS"
+
+    # ── Stability Fix: cap NVIDIA HugePages ──────────────────────────────────────
+    # NVIDIA's WSL2 driver reserves HugePages proportional to available RAM — up to
+    # ~8GB on a 10GB WSL instance. Under that memory pressure Docker containers OOM
+    # and clore-hosting crashes. Capping at 256 (512MB) frees that RAM persistently
+    # via systemd-sysctl.service on every WSL boot.
+    Write-Log "Capping NVIDIA HugePages at 256 (512MB) to prevent RAM starvation..."
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo vm.nr_hugepages=256 > /etc/sysctl.d/90-wsl.conf && sysctl -p /etc/sysctl.d/90-wsl.conf" 2>&1 | ForEach-Object { Write-Log $_ }
+    Write-Log "HugePages capped — NVIDIA driver limited to 512MB kernel pages" "OK"
+    Set-Step "HugePages cap (RAM fix)" "PASS"
 
     # ── Ensure daemon.json has default-runtime:nvidia ─────────────────────────
     # Clore's install.sh does not set default-runtime, causing Docker failure badge.

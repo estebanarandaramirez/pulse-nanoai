@@ -288,6 +288,10 @@ function Invoke-Phase2 {
         Write-Log "Clore.ai install complete" "OK"
     }
 
+    Write-Log "Capping NVIDIA HugePages at 256 (512MB) to prevent RAM starvation..."
+    wsl -d Ubuntu-22.04 --user root -- bash -c "echo vm.nr_hugepages=256 > /etc/sysctl.d/90-wsl.conf && sysctl -p /etc/sysctl.d/90-wsl.conf" 2>&1 | ForEach-Object { Write-Log $_ }
+    Write-Log "HugePages capped — NVIDIA driver limited to 512MB kernel pages" "OK"
+
     # Decode fleet token and write onboarding.json
     Write-Log "Decoding Clore fleet token..."
     try {
