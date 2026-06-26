@@ -248,16 +248,16 @@ async function configureNode(
     };
   }
 
-  // Pull dynamic values from the form (CSRF already set above; grab data_center_id etc.)
+  // Pull any hidden fields the real form sends (catches required fields we don't know about)
   const formBody = extractEditFormBody(formScope, patchUrl);
-  const dataCenterId = formBody.get('node[data_center_id]') ?? '';
 
-  // Build a complete PATCH body — hardcode all visible config fields from the
-  // Configuration tab screenshot. Field names follow standard Rails conventions.
+  // Build the POST body — start with all hidden fields from the actual form, then override
   const body = new URLSearchParams();
+  for (const [k, v] of formBody.entries()) body.set(k, v);
   body.set('_method', 'patch');
   body.set('authenticity_token', editCsrf);
-  if (dataCenterId) body.set('node[data_center_id]', dataCenterId);
+  // Record what the form itself provided (for debug)
+  const formHiddenFields = [...formBody.keys()];
 
   // Services — enable Rental; omit VPN and Rendering (unchecked = not sent)
   body.append('node[services][]', 'rental');
@@ -283,11 +283,9 @@ async function configureNode(
   const allFieldNames: string[] = [];
   for (const [k] of body.entries()) allFieldNames.push(k);
 
-  // ── Step C: PATCH the node ───────────────────────────────────────────────────
-  // Remove _method from body — we send a real PATCH so no override needed
-  body.delete('_method');
+  // ── Step C: POST to node_settings (Rails form uses POST + _method=patch) ─────
   const saveRes = await fetch(patchUrl, {
-    method: 'PATCH',
+    method: 'POST',
     redirect: 'follow',
     headers: {
       ...commonHeaders,
@@ -322,7 +320,7 @@ async function configureNode(
   return {
     success: false,
     message: `Node ${nodeId} config save failed: ${errMsg}`,
-    debug: `patchUrl=${patchUrl} formAction=${formActionAttr} fields=${JSON.stringify(allFieldNames.slice(0, 20))} patchStatus=${saveRes.status} body=${saveSnippet}`,
+    debug: `patchUrl=${patchUrl} formHidden=${JSON.stringify(formHiddenFields)} patchStatus=${saveRes.status} body=${saveSnippet}`,
   };
 }
 
