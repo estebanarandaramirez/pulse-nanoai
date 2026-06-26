@@ -150,12 +150,12 @@ async function findNodeIdByName(
   // Find the href="/hosting/nodes/:id" closest to the node name
   const escaped = nodeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const byName = html.match(new RegExp(
-    `href=["'](/hosting/nodes/(\\d+))["'][\\s\\S]{0,400}${escaped}|${escaped}[\\s\\S]{0,400}href=["']/hosting/nodes/(\\d+)["']`,
+    `href=["'](/(?:hosting/)?nodes/(\\d+))["'][\\s\\S]{0,400}${escaped}|${escaped}[\\s\\S]{0,400}href=["']/(?:hosting/)?nodes/(\\d+)["']`,
   ));
   if (byName) return byName[2] ?? byName[3] ?? null;
 
   // Fallback: return the first node ID found (most recently added in a sorted list)
-  const first = html.match(/href=["']\/hosting\/nodes\/(\d+)["']/i);
+  const first = html.match(/href=["']\/(?:hosting\/)?nodes\/(\d+)["']/i);
   return first ? first[1] : null;
 }
 
@@ -168,10 +168,10 @@ async function configureNode(
   // ── Step A: GET the node configuration page ─────────────────────────────────
   // OctaSpace doesn't use /edit — try the node page directly, then with tab param
   const candidateUrls = [
+    `${CUBE_BASE}/nodes/${nodeId}`,
+    `${CUBE_BASE}/nodes/${nodeId}?tab=configuration`,
+    `${CUBE_BASE}/nodes/${nodeId}/edit`,
     `${CUBE_BASE}/hosting/nodes/${nodeId}`,
-    `${CUBE_BASE}/hosting/nodes/${nodeId}?tab=configuration`,
-    `${CUBE_BASE}/hosting/nodes/${nodeId}/configuration`,
-    `${CUBE_BASE}/hosting/nodes/${nodeId}/edit`,
   ];
 
   let editHtml = '';
@@ -215,7 +215,7 @@ async function configureNode(
   }
 
   // ── Step B: Build the PATCH body from existing form fields ──────────────────
-  const patchUrl = `${CUBE_BASE}/hosting/nodes/${nodeId}`;
+  const patchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
   const body = extractEditFormBody(editHtml, patchUrl);
   // Also dump field names for debugging if save fails
   const allFieldNames: string[] = [];
