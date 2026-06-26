@@ -206,7 +206,7 @@ async function configureNode(
   // ── Step B: Isolate the PATCH form and extract its fields ───────────────────
   // The page has multiple forms (Sessions filter, etc.). The Configuration form
   // is the one with a hidden _method=patch input — find it by that signature.
-  const patchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
+  const defaultPatchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
 
   // Locate _method=patch hidden input, then slice out its parent <form>…</form>
   const methodInputMatch = editHtml.match(
@@ -223,6 +223,12 @@ async function configureNode(
     }
   }
 
+  // Extract the actual form action — use it as the PATCH target instead of guessing
+  const formActionAttr = formScope.match(/<form[^>]+action=["']([^"']+)["']/i)?.[1];
+  const patchUrl = formActionAttr
+    ? (formActionAttr.startsWith('http') ? formActionAttr : `${CUBE_BASE}${formActionAttr}`)
+    : defaultPatchUrl;
+
   const editCsrf = extractCsrf(formScope) ?? extractCsrf(editHtml);
   if (!editCsrf) {
     // Dump all forms found to understand page structure
@@ -235,63 +241,52 @@ async function configureNode(
     };
   }
 
-  const body = extractEditFormBody(formScope, patchUrl);
+  // Pull dynamic values from the form (CSRF already set above; grab data_center_id etc.)
+  const formBody = extractEditFormBody(formScope, patchUrl);
+  const dataCenterId = formBody.get('node[data_center_id]') ?? '';
+
+  // Build a complete PATCH body — hardcode all visible config fields from the
+  // Configuration tab screenshot. Field names follow standard Rails conventions.
+  const body = new URLSearchParams();
   body.set('_method', 'patch');
   body.set('authenticity_token', editCsrf);
+  if (dataCenterId) body.set('node[data_center_id]', dataCenterId);
 
-  // All input names from the scoped form (for field-name pattern matching below)
+  // Services — enable Rental; omit VPN and Rendering (unchecked = not sent)
+  body.append('node[services][]', 'rental');
+
+  // Service ports
+  body.set('node[service_ports_enabled]', '1');
+  body.set('node[service_port_start]', '51800');
+  body.set('node[service_port_end]', '51816');
+
+  // Prices (USD, matching node 11347 defaults)
+  body.set('node[base_price]', '0.3');
+  body.set('node[storage_price]', '0.001');
+  body.set('node[traffic_price]', '0.003');
+
+  // Availability — all 7 days, full 24h UTC window
+  for (let d = 0; d <= 6; d++) body.append('node[day_of_weeks][]', String(d));
+  body.set('node[time_period_start]', '0');
+  body.set('node[time_period_end]', '23');
+
+  // Mining: disabled for mining workloads (toggle ON in screenshot = 1)
+  body.set('node[mining_disabled]', '1');
+
   const allFieldNames: string[] = [];
   for (const [k] of body.entries()) allFieldNames.push(k);
 
-  const allInputs: string[] = [];
-  for (const m of formScope.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)) {
-    const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1] ?? '';
-    if (name) allInputs.push(name);
-  }
-
-  // Enable Rental service ─────────────────────────────────────────────────────
-  const servicesArrayField = allInputs.find(n => n.match(/services\[\]/i));
-  const rentalBoolField = allInputs.find(n => n.match(/\[rental\]/i));
-  if (servicesArrayField) {
-    // Array-style: the hidden sibling sends [] so the array is always submitted;
-    // we append the "rental" value to opt-in.
-    body.append(servicesArrayField, 'rental');
-  } else if (rentalBoolField) {
-    body.set(rentalBoolField, '1');
-  } else {
-    // Blind attempt using both common patterns
-    body.append('node[services][]', 'rental');
-  }
-
-  // Enable service ports ──────────────────────────────────────────────────────
-  const portsEnabledField = allInputs.find(n =>
-    n.match(/service_ports?_enabled|enable_service_ports?/i)
-  ) ?? 'node[service_ports_enabled]';
-  body.set(portsEnabledField, '1');
-
-  // Port range — override whatever is already in the form
-  const portStartField = allInputs.find(n => n.match(/port_start|service_port_start/i)) ?? 'node[service_port_start]';
-  const portEndField   = allInputs.find(n => n.match(/port_end|service_port_end/i))   ?? 'node[service_port_end]';
-  body.set(portStartField, '51800');
-  body.set(portEndField,   '51816');
-
-  // ── Step C: PATCH /hosting/nodes/:id ────────────────────────────────────────
-  const turboReqId = crypto.randomUUID();
+  // ── Step C: PATCH the node ───────────────────────────────────────────────────
   const saveRes = await fetch(patchUrl, {
     method: 'POST',   // Rails tunnels PATCH via hidden _method field
     redirect: 'follow',
     headers: {
       ...commonHeaders,
-      'Accept': 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml',
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Content-Type': 'application/x-www-form-urlencoded',
       'Cookie': jar.toString(),
       'Referer': editRes.url,
       'Origin': CUBE_BASE,
-      'X-CSRF-Token': editCsrf,
-      'X-Turbo-Request-Id': turboReqId,
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-origin',
     },
     body: body.toString(),
   });
@@ -310,7 +305,7 @@ async function configureNode(
   return {
     success: false,
     message: `Node ${nodeId} config save failed: ${errMsg}`,
-    debug: `configUrl=${editRes.url} fields=${JSON.stringify(allFieldNames.slice(0, 20))} patchStatus=${saveRes.status} body=${saveSnippet}`,
+    debug: `patchUrl=${patchUrl} formAction=${formActionAttr} fields=${JSON.stringify(allFieldNames.slice(0, 20))} patchStatus=${saveRes.status} body=${saveSnippet}`,
   };
 }
 
