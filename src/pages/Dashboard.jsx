@@ -80,6 +80,8 @@ export default function Dashboard() {
   const [octaData, setOctaData]       = useState(null);
   const [octaLoading, setOctaLoading] = useState(false);
   const [octaStale, setOctaStale]     = useState(false);
+  const [octaNodes, setOctaNodes]     = useState([]);
+  const [octaNodesLoading, setOctaNodesLoading] = useState(false);
 
   // ── OctaSpace price editing ──────────────────────────────────────────────────
   const [editingNodePrice, setEditingNodePrice] = useState(null); // { node_id, value }
@@ -153,6 +155,13 @@ export default function Dashboard() {
       }
     } catch {}
     setOctaLoading(false);
+    // Load live node data (status + rate + income) from web scrape
+    setOctaNodesLoading(true);
+    try {
+      const nr = await base44.functions.invoke("getOctaNodeInfo", {});
+      if (nr.data?.nodes) setOctaNodes(nr.data.nodes);
+    } catch {}
+    setOctaNodesLoading(false);
   }, []);
 
   useEffect(() => {
@@ -217,7 +226,7 @@ export default function Dashboard() {
     : (octaData?.total_income_24h_usd ?? octaData?.total_earnings_usd ?? 0);
   const platformTotal   = isClore ? (cloreData?.total_servers  ?? 0) : (octaData?.total_nodes   ?? 0);
   const platformActive  = isClore ? (cloreData?.rented_servers ?? 0) : (octaData?.active_nodes  ?? 0);
-  const platformServers = isClore ? (cloreData?.server_list    ?? []) : (octaData?.nodes         ?? []);
+  const platformServers = isClore ? (cloreData?.server_list ?? []) : (octaNodes.length ? octaNodes : (octaData?.nodes ?? []));
   const marketRates     = isClore
     ? (cloreData?.market_rates?.length ? cloreData.market_rates : [])
     : OCTA_MARKET_RATES;
