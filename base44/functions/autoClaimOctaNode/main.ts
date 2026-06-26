@@ -251,37 +251,46 @@ async function configureNode(
   // Pull any hidden fields the real form sends (catches required fields we don't know about)
   const formBody = extractEditFormBody(formScope, patchUrl);
 
-  // Build the POST body — start with all hidden fields from the actual form, then override
+  // Exact payload captured from browser DevTools when clicking "Save settings"
+  const formHiddenFields = [...formBody.keys()]; // hidden fields the form provides
   const body = new URLSearchParams();
-  for (const [k, v] of formBody.entries()) body.set(k, v);
   body.set('_method', 'patch');
   body.set('authenticity_token', editCsrf);
-  // Record what the form itself provided (for debug)
-  const formHiddenFields = [...formBody.keys()];
 
-  // Services — enable Rental; omit VPN and Rendering (unchecked = not sent)
-  body.append('node[services][]', 'rental');
+  // Services: 1=Rental, 2=VPN, 3=Rendering — enable Rental only
+  body.append('node_setting[services][]', '1');
 
   // Service ports
-  body.set('node[service_ports_enabled]', '1');
-  body.set('node[service_port_start]', '51800');
-  body.set('node[service_port_end]', '51816');
+  body.set('node_setting[service_ports_start]', '51800');
+  body.set('node_setting[service_ports_end]', '51816');
+  body.append('node_setting[service_ports_enable]', '0'); // hidden default
+  body.append('node_setting[service_ports_enable]', '1'); // checked
 
-  // Prices (USD, matching node 11347 defaults)
-  body.set('node[base_price]', '0.3');
-  body.set('node[storage_price]', '0.001');
-  body.set('node[traffic_price]', '0.003');
+  // Prices — stored as integer (USD cents × 10): $0.30 = 3000, $0.001 = 10, $0.003 = 30
+  body.set('node_price[currency_usd]', '0');
+  body.append('node_price[attr_name]', 'base_usd');
+  body.set('node_price[base_usd]', '3000');
+  body.set('node_price[formatted_base_usd]', '0.3');
+  body.append('node_price[attr_name]', 'storage_usd');
+  body.set('node_price[storage_usd]', '10');
+  body.set('node_price[formatted_storage_usd]', '0.001');
+  body.append('node_price[attr_name]', 'traffic_usd');
+  body.set('node_price[traffic_usd]', '30');
+  body.set('node_price[formatted_traffic_usd]', '0.003');
 
-  // Availability — all 7 days, full 24h UTC window
-  for (let d = 0; d <= 6; d++) body.append('node[day_of_weeks][]', String(d));
-  body.set('node[time_period_start]', '0');
-  body.set('node[time_period_end]', '23');
+  // Availability: days 1–7 (Mon–Sun), hours 0–23 UTC
+  for (let d = 1; d <= 7; d++) body.append('node_setting[rent_days][]', String(d));
+  body.set('node_setting[rent_hours_start]', '0');
+  body.set('node_setting[rent_hours_end]', '23');
 
-  // Mining: disabled for mining workloads (toggle ON in screenshot = 1)
-  body.set('node[mining_disabled]', '1');
+  // Mining disabled (toggle ON = hidden 0 + checked 1)
+  body.append('node_setting[mining_disabled]', '0');
+  body.append('node_setting[mining_disabled]', '1');
 
-  const allFieldNames: string[] = [];
-  for (const [k] of body.entries()) allFieldNames.push(k);
+  // Maintenance off
+  body.set('node_setting[maintenance]', '0');
+
+  body.set('commit', 'Save settings');
 
   // ── Step C: POST to node_settings (Rails form uses POST + _method=patch) ─────
   const saveRes = await fetch(patchUrl, {
