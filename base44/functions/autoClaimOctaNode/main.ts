@@ -87,12 +87,192 @@ function extractFormBody(html: string, formAction: string, tokenOverride: { fiel
   return body;
 }
 
+// Extract all editable form fields (hidden + text/number inputs + selects) for PATCH submissions
+function extractEditFormBody(html: string, formAction: string): URLSearchParams {
+  const body = new URLSearchParams();
+
+  const escapedAction = formAction.replace(CUBE_BASE, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedBase = CUBE_BASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // The edit form action is the node path (without /edit suffix)
+  const nodePathMatch = formAction.match(/\/hosting\/nodes\/\d+/);
+  const nodePathEsc = nodePathMatch ? nodePathMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : escapedAction;
+  const formChunkMatch = html.match(
+    new RegExp(`<form[^>]+\\saction=["'](?:${escapedBase})?${nodePathEsc}["'][\\s\\S]*?<\\/form>`, 'i')
+  );
+  const scope = formChunkMatch ? formChunkMatch[0] : html;
+
+  // Hidden inputs (includes authenticity_token and _method)
+  for (const m of scope.matchAll(/<input[^>]+type=["']hidden["'][^>]*>/gi)) {
+    const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1];
+    const value = m[0].match(/\svalue=["']([^"']*)["']/i)?.[1] ?? '';
+    if (name) body.set(name, value);
+  }
+
+  // Text / number inputs
+  for (const m of scope.matchAll(/<input[^>]+type=["'](?:text|number)["'][^>]*>/gi)) {
+    const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1];
+    const value = m[0].match(/\svalue=["']([^"']*)["']/i)?.[1] ?? '';
+    if (name) body.set(name, value);
+  }
+
+  // Selects — use the selected option if present, else first option
+  for (const sel of scope.matchAll(/<select[^>]+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/select>/gi)) {
+    const name = sel[1];
+    const selectedOpt = [...sel[2].matchAll(/<option[^>]+value=["']([^"']+)["'][^>]*selected/gi)][0]
+      ?? [...sel[2].matchAll(/<option[^>]+value=["']([^"']+)["']/gi)][0];
+    if (selectedOpt) body.set(name, selectedOpt[1]);
+  }
+
+  return body;
+}
+
+// Extract a node ID (/hosting/nodes/:id) from a URL or HTML blob
+function extractNodeId(html: string, url: string): string | null {
+  const fromUrl = url.match(/\/hosting\/nodes\/(\d+)/);
+  if (fromUrl) return fromUrl[1];
+  const fromHtml = html.match(/\/hosting\/nodes\/(\d+)/);
+  return fromHtml ? fromHtml[1] : null;
+}
+
+// Find a node ID on the nodes list page by matching a node name
+async function findNodeIdByName(
+  jar: CookieJar,
+  commonHeaders: Record<string, string>,
+  nodeName: string,
+): Promise<string | null> {
+  const listRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
+    redirect: 'follow',
+    headers: { ...commonHeaders, 'Cookie': jar.toString() },
+  });
+  jar.ingest(listRes.headers);
+  const html = await listRes.text();
+
+  // Find the href="/hosting/nodes/:id" closest to the node name
+  const escaped = nodeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const byName = html.match(new RegExp(
+    `href=["'](/hosting/nodes/(\\d+))["'][\\s\\S]{0,400}${escaped}|${escaped}[\\s\\S]{0,400}href=["']/hosting/nodes/(\\d+)["']`,
+  ));
+  if (byName) return byName[2] ?? byName[3] ?? null;
+
+  // Fallback: return the first node ID found (most recently added in a sorted list)
+  const first = html.match(/href=["']\/hosting\/nodes\/(\d+)["']/i);
+  return first ? first[1] : null;
+}
+
+// Configure a node: enable Rental service and Enable service ports
+async function configureNode(
+  jar: CookieJar,
+  commonHeaders: Record<string, string>,
+  nodeId: string,
+): Promise<{ success: boolean; message: string; debug?: string }> {
+  // ── Step A: GET the node edit page ──────────────────────────────────────────
+  const editRes = await fetch(`${CUBE_BASE}/hosting/nodes/${nodeId}/edit`, {
+    redirect: 'follow',
+    headers: {
+      ...commonHeaders,
+      'Cookie': jar.toString(),
+      'Referer': `${CUBE_BASE}/hosting/nodes`,
+    },
+  });
+  jar.ingest(editRes.headers);
+  const editHtml = await editRes.text();
+
+  const editCsrf = extractCsrf(editHtml);
+  if (!editCsrf) {
+    return {
+      success: false,
+      message: `Node ${nodeId} config: could not extract CSRF from edit page`,
+      debug: `editUrl=${editRes.url} editStatus=${editRes.status}`,
+    };
+  }
+
+  // ── Step B: Build the PATCH body from existing form fields ──────────────────
+  const patchUrl = `${CUBE_BASE}/hosting/nodes/${nodeId}`;
+  const body = extractEditFormBody(editHtml, patchUrl);
+
+  // Ensure _method is PATCH (Rails method override)
+  body.set('_method', 'patch');
+  body.set('authenticity_token', editCsrf);
+
+  // Inspect which checkbox/field names are actually present so we can match them
+  // regardless of whether OctaSpace uses node[services][], node[rental], etc.
+  const allInputs: string[] = [];
+  for (const m of editHtml.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)) {
+    const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1] ?? '';
+    if (name) allInputs.push(name);
+  }
+
+  // Enable Rental service ─────────────────────────────────────────────────────
+  // OctaSpace may use node[services][] array OR individual booleans like node[rental]
+  const servicesArrayField = allInputs.find(n => n.match(/services\[\]/i));
+  const rentalBoolField = allInputs.find(n => n.match(/\[rental\]/i));
+  if (servicesArrayField) {
+    // Array-style: the hidden sibling sends [] so the array is always submitted;
+    // we append the "rental" value to opt-in.
+    body.append(servicesArrayField, 'rental');
+  } else if (rentalBoolField) {
+    body.set(rentalBoolField, '1');
+  } else {
+    // Blind attempt using both common patterns
+    body.append('node[services][]', 'rental');
+  }
+
+  // Enable service ports ──────────────────────────────────────────────────────
+  const portsEnabledField = allInputs.find(n =>
+    n.match(/service_ports?_enabled|enable_service_ports?/i)
+  ) ?? 'node[service_ports_enabled]';
+  body.set(portsEnabledField, '1');
+
+  // Port range — override whatever is already in the form
+  const portStartField = allInputs.find(n => n.match(/port_start|service_port_start/i)) ?? 'node[service_port_start]';
+  const portEndField   = allInputs.find(n => n.match(/port_end|service_port_end/i))   ?? 'node[service_port_end]';
+  body.set(portStartField, '51800');
+  body.set(portEndField,   '51816');
+
+  // ── Step C: PATCH /hosting/nodes/:id ────────────────────────────────────────
+  const turboReqId = crypto.randomUUID();
+  const saveRes = await fetch(patchUrl, {
+    method: 'POST',   // Rails tunnels PATCH via hidden _method field
+    redirect: 'follow',
+    headers: {
+      ...commonHeaders,
+      'Accept': 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml',
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'Cookie': jar.toString(),
+      'Referer': `${CUBE_BASE}/hosting/nodes/${nodeId}/edit`,
+      'Origin': CUBE_BASE,
+      'X-CSRF-Token': editCsrf,
+      'X-Turbo-Request-Id': turboReqId,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+    },
+    body: body.toString(),
+  });
+  jar.ingest(saveRes.headers);
+  const saveHtml = await saveRes.text();
+
+  if (saveHtml.includes('successfully updated') || saveHtml.includes('Node was successfully')) {
+    return { success: true, message: `Node ${nodeId} configured: Rental enabled, service ports 51800-51816 open` };
+  }
+
+  // Surface any toast error
+  const errMatch = saveHtml.match(/<div[^>]+flex-1[^>]*>\s*([^<]{5,}?)\s*<\/div>/i);
+  const errMsg = errMatch ? errMatch[1].trim() : `HTTP ${saveRes.status}`;
+  return {
+    success: false,
+    message: `Node ${nodeId} config save failed: ${errMsg}`,
+    debug: `fields=${JSON.stringify(allInputs.slice(0, 20))} patchStatus=${saveRes.status}`,
+  };
+}
+
 async function claimNodeOnCube(
   token: string,
   email: string,
   password: string,
   nodeName: string,
-): Promise<{ success: boolean; message: string; debug?: string }> {
+  autoConfigure: boolean,
+): Promise<{ success: boolean; message: string; node_id?: string; configure_result?: { success: boolean; message: string }; debug?: string }> {
   const jar = new CookieJar();
   const commonHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -113,6 +293,9 @@ async function claimNodeOnCube(
   }
 
   // ── Step 2: POST credentials ─────────────────────────────────────────────────
+  // Use redirect: 'manual' so we capture the Set-Cookie on the 302 response
+  // before following the redirect. With redirect: 'follow', Deno silently drops
+  // the 302 response headers (including the authenticated session cookie).
   const signInBody = new URLSearchParams({
     'authenticity_token': signInCsrf,
     'user[email]': email,
@@ -121,9 +304,6 @@ async function claimNodeOnCube(
     'commit': 'Log in',
   });
 
-  // Use redirect: 'manual' so we capture the Set-Cookie on the 302 response
-  // before following the redirect. With redirect: 'follow', Deno silently drops
-  // the 302 response headers (including the authenticated session cookie).
   const signInRaw = await fetch(`${CUBE_BASE}/users/sign_in`, {
     method: 'POST',
     redirect: 'manual',
@@ -278,7 +458,28 @@ async function claimNodeOnCube(
   // The nodes list only shows node names, not tokens — check the Turbo Stream
   // response directly for OctaSpace's success toast text.
   if (createHtml.includes('successfully created')) {
-    return { success: true, message: `Node token ${token} claimed on cube.octa.computer` };
+    // ── Step 7: Extract node ID so we can configure it ───────────────────────
+    let nodeId = extractNodeId(createHtml, createRes.url);
+    if (!nodeId) {
+      nodeId = await findNodeIdByName(jar, commonHeaders, nodeName);
+    }
+
+    if (!autoConfigure || !nodeId) {
+      return {
+        success: true,
+        message: `Node token ${token} claimed on cube.octa.computer`,
+        node_id: nodeId ?? undefined,
+      };
+    }
+
+    // ── Steps 8-9: Configure the node (Rental + service ports) ───────────────
+    const configResult = await configureNode(jar, commonHeaders, nodeId);
+    return {
+      success: true,
+      message: `Node token ${token} claimed on cube.octa.computer`,
+      node_id: nodeId,
+      configure_result: configResult,
+    };
   }
 
   // Extract the toast error message
@@ -301,9 +502,9 @@ Deno.serve(async (req) => {
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { node_token, node_name } = await req.json().catch(() => ({}));
-  if (!node_token) {
-    return Response.json({ error: 'node_token is required' }, { status: 400 });
+  const { node_token, node_name, node_id, auto_configure = true } = await req.json().catch(() => ({}));
+  if (!node_token && !node_id) {
+    return Response.json({ error: 'node_token or node_id is required' }, { status: 400 });
   }
 
   const email = Deno.env.get('OCTASPACE_WEB_EMAIL');
@@ -317,7 +518,39 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const result = await claimNodeOnCube(node_token, email, password, node_name || node_token.slice(-6).toUpperCase());
+    // configure_only mode: skip claim, go straight to configureNode with the given node_id
+    if (node_id && !node_token) {
+      const jar = new CookieJar();
+      const commonHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      };
+      // Sign in first so the session cookie is valid for configureNode
+      const loginPageRes = await fetch(`${CUBE_BASE}/users/sign_in`, { headers: commonHeaders });
+      jar.ingest(loginPageRes.headers);
+      const loginHtml = await loginPageRes.text();
+      const csrf = extractCsrf(loginHtml);
+      const signInRaw = await fetch(`${CUBE_BASE}/users/sign_in`, {
+        method: 'POST', redirect: 'manual',
+        headers: { ...commonHeaders, 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': jar.toString(), 'Origin': CUBE_BASE },
+        body: new URLSearchParams({ authenticity_token: csrf, 'user[email]': email, 'user[password]': password, 'user[remember_me]': '0', commit: 'Log in' }).toString(),
+      });
+      jar.ingest(signInRaw.headers);
+      if (signInRaw.status >= 400 || signInRaw.status === 200) {
+        return Response.json({ success: false, message: 'Sign-in failed — check credentials' });
+      }
+      const configResult = await configureNode(jar, commonHeaders, String(node_id));
+      return Response.json({ success: configResult.success, node_id: String(node_id), configure_result: configResult });
+    }
+
+    const result = await claimNodeOnCube(
+      node_token,
+      email,
+      password,
+      node_name || node_token.slice(-6).toUpperCase(),
+      auto_configure !== false,
+    );
     return Response.json(result);
   } catch (err: any) {
     return Response.json({ success: false, message: `Unexpected error: ${err.message}` }, { status: 500 });
