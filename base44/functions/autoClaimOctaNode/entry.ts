@@ -208,12 +208,14 @@ async function configureNode(
   // is the one with a hidden _method=patch input — find it by that signature.
   const defaultPatchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
 
-  // Find all <form>…</form> blocks that contain a _method=patch hidden input,
-  // then pick the one whose action is the base node path (/nodes/:id), not a sub-action.
+  // Find all <form>…</form> blocks that contain a _method=patch hidden input.
+  // Pick the first one whose action starts with /nodes/:id but is NOT a sub-action
+  // (change_data_center, etc.) — ignore query strings.
   const patchFormPattern = /<input[^>]+name=["']_method["'][^>]+value=["']patch["'][^>]*>|<input[^>]+value=["']patch["'][^>]+name=["']_method["'][^>]*>/gi;
   let formScope = editHtml;
   let formActionAttr: string | undefined;
   let match: RegExpExecArray | null;
+  const subActionPattern = /\/(change_|delete|destroy|remove)/i;
   while ((match = patchFormPattern.exec(editHtml)) !== null) {
     const pos = match.index;
     const formStart = editHtml.lastIndexOf('<form', pos);
@@ -221,10 +223,11 @@ async function configureNode(
     if (formStart === -1 || formEnd <= formStart) continue;
     const candidate = editHtml.slice(formStart, formEnd);
     const action = candidate.match(/<form[^>]+action=["']([^"']+)["']/i)?.[1] ?? '';
-    // Accept the form whose action is exactly /nodes/:id (no sub-path after the id)
-    if (action.match(/\/nodes\/\d+\/?$/)) {
+    // Strip query string for path matching
+    const actionPath = action.split('?')[0];
+    if (actionPath.match(new RegExp(`/nodes/${nodeId}\\/?$`)) || (!subActionPattern.test(action) && action.includes(`/nodes/${nodeId}`))) {
       formScope = candidate;
-      formActionAttr = action;
+      formActionAttr = actionPath || action;
       break;
     }
   }
@@ -281,8 +284,10 @@ async function configureNode(
   for (const [k] of body.entries()) allFieldNames.push(k);
 
   // ── Step C: PATCH the node ───────────────────────────────────────────────────
+  // Remove _method from body — we send a real PATCH so no override needed
+  body.delete('_method');
   const saveRes = await fetch(patchUrl, {
-    method: 'POST',   // Rails tunnels PATCH via hidden _method field
+    method: 'PATCH',
     redirect: 'follow',
     headers: {
       ...commonHeaders,
@@ -291,13 +296,21 @@ async function configureNode(
       'Cookie': jar.toString(),
       'Referer': editRes.url,
       'Origin': CUBE_BASE,
+      'X-CSRF-Token': editCsrf,
     },
     body: body.toString(),
   });
   jar.ingest(saveRes.headers);
   const saveHtml = await saveRes.text();
 
-  if (saveHtml.includes('successfully updated') || saveHtml.includes('Node was successfully')) {
+  // Success: Rails redirects to the node page (302 → 200); Turbo returns 200 with stream.
+  // Accept any 2xx that lands back on the node's own page or contains success text.
+  if (
+    saveRes.status < 300 &&
+    (saveHtml.includes('successfully updated') ||
+      saveHtml.includes('Node was successfully') ||
+      saveRes.url.includes(`/nodes/${nodeId}`))
+  ) {
     return { success: true, message: `Node ${nodeId} configured: Rental enabled, service ports 51800-51816 open` };
   }
 
