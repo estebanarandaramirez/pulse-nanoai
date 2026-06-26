@@ -168,10 +168,8 @@ async function configureNode(
   // ── Step A: GET the node configuration page ─────────────────────────────────
   // OctaSpace doesn't use /edit — try the node page directly, then with tab param
   const candidateUrls = [
+    `${CUBE_BASE}/nodes/${nodeId}?type=configuration`,
     `${CUBE_BASE}/nodes/${nodeId}`,
-    `${CUBE_BASE}/nodes/${nodeId}?tab=configuration`,
-    `${CUBE_BASE}/nodes/${nodeId}/edit`,
-    `${CUBE_BASE}/hosting/nodes/${nodeId}`,
   ];
 
   let editHtml = '';
