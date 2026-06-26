@@ -208,23 +208,27 @@ async function configureNode(
   // is the one with a hidden _method=patch input — find it by that signature.
   const defaultPatchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
 
-  // Locate _method=patch hidden input, then slice out its parent <form>…</form>
-  const methodInputMatch = editHtml.match(
-    /<input[^>]+name=["']_method["'][^>]+value=["']patch["'][^>]*>|<input[^>]+value=["']patch["'][^>]+name=["']_method["'][^>]*>/i
-  );
-
-  let formScope = editHtml; // fallback: scan whole page
-  if (methodInputMatch) {
-    const pos = editHtml.indexOf(methodInputMatch[0]);
+  // Find all <form>…</form> blocks that contain a _method=patch hidden input,
+  // then pick the one whose action is the base node path (/nodes/:id), not a sub-action.
+  const patchFormPattern = /<input[^>]+name=["']_method["'][^>]+value=["']patch["'][^>]*>|<input[^>]+value=["']patch["'][^>]+name=["']_method["'][^>]*>/gi;
+  let formScope = editHtml;
+  let formActionAttr: string | undefined;
+  let match: RegExpExecArray | null;
+  while ((match = patchFormPattern.exec(editHtml)) !== null) {
+    const pos = match.index;
     const formStart = editHtml.lastIndexOf('<form', pos);
     const formEnd = editHtml.indexOf('</form>', pos) + '</form>'.length;
-    if (formStart !== -1 && formEnd > formStart) {
-      formScope = editHtml.slice(formStart, formEnd);
+    if (formStart === -1 || formEnd <= formStart) continue;
+    const candidate = editHtml.slice(formStart, formEnd);
+    const action = candidate.match(/<form[^>]+action=["']([^"']+)["']/i)?.[1] ?? '';
+    // Accept the form whose action is exactly /nodes/:id (no sub-path after the id)
+    if (action.match(/\/nodes\/\d+\/?$/)) {
+      formScope = candidate;
+      formActionAttr = action;
+      break;
     }
   }
 
-  // Extract the actual form action — use it as the PATCH target instead of guessing
-  const formActionAttr = formScope.match(/<form[^>]+action=["']([^"']+)["']/i)?.[1];
   const patchUrl = formActionAttr
     ? (formActionAttr.startsWith('http') ? formActionAttr : `${CUBE_BASE}${formActionAttr}`)
     : defaultPatchUrl;
