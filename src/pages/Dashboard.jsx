@@ -94,10 +94,7 @@ export default function Dashboard() {
     try {
       const res = await base44.functions.invoke('updateOctaNodePrice', { node_id: String(nodeId), base_usd: price });
       if (res.data?.success) {
-        setOctaData(prev => ({
-          ...prev,
-          nodes: (prev?.nodes ?? []).map(n => n.node_id == nodeId ? { ...n, rate_per_hour: price } : n),
-        }));
+        setOctaNodes(prev => prev.map(n => n.node_id == nodeId ? { ...n, rate_per_hour: price } : n));
         setEditingNodePrice(null);
       } else {
         alert(`Price update failed: ${res.data?.message ?? 'unknown error'}`);
@@ -502,7 +499,7 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {platformServers.map((s, i) => {
-                    const isActive = s.rented || s.status === 'active';
+                    const isActive = s.rented || s.status === 'active' || s.status === 'online';
                     const rate = s.price_per_hour ?? s.rate_per_hour ?? 0;
                     const nodeId = s.server_id ?? s.node_id;
                     const isEditingThis = !isClore && editingNodePrice?.node_id == nodeId;
@@ -513,7 +510,17 @@ export default function Dashboard() {
                           {s.name ?? `Node ${i + 1}`}
                         </td>
                         <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
-                          {s.gpu_model ?? s.gpu_name ?? "—"}
+                          {s.gpu_model ?? s.gpu_name ?? (() => {
+                            // Extract GPU from "OCTA-{GPUModel}-{suffix}" node names
+                            const parts = (s.name ?? '').split('-');
+                            if (parts.length >= 3 && parts[0] === 'OCTA') {
+                              return parts.slice(1, -1).join('')
+                                .replace(/([A-Z]{2,})([A-Z][a-z])/g, '$1 $2')
+                                .replace(/([a-z])([A-Z])/g, '$1 $2')
+                                .replace(/([A-Za-z])(\d)/g, '$1 $2');
+                            }
+                            return '—';
+                          })()}
                         </td>
                         <td className="px-4 py-2.5">
                           <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
