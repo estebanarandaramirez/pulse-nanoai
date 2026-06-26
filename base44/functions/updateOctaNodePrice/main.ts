@@ -166,9 +166,19 @@ async function updateNodePrice(
     };
   }
 
-  const patchUrl = formActionAttr
-    ? (formActionAttr.startsWith('http') ? formActionAttr : `${CUBE_BASE}${formActionAttr}`)
-    : `${CUBE_BASE}/nodes/${nodeId}`;
+  // Guard: if we couldn't find the node_settings form, fail explicitly rather than
+  // POSTing to the wrong URL and falsely detecting success from the node page URL.
+  if (!formActionAttr || !formActionAttr.includes('node_settings')) {
+    const allActions = [...configHtml.matchAll(/<form[^>]+action=["']([^"']+)["']/gi)].map(m => m[1]);
+    const patchActions = [...configHtml.matchAll(/name=["']_method["'][^>]+value=["']patch["']|value=["']patch["'][^>]+name=["']_method["']/gi)].length;
+    return {
+      success: false,
+      message: `Could not locate node_settings form for node ${nodeId}`,
+      debug: `formActionAttr=${formActionAttr} patchForms=${patchActions} allFormActions=${JSON.stringify(allActions)}`,
+    };
+  }
+
+  const patchUrl = formActionAttr.startsWith('http') ? formActionAttr : `${CUBE_BASE}${formActionAttr}`;
 
   // ── Step 3: Build the complete save-settings payload ─────────────────────────
   // Must send the full payload (not just price fields) or Rails resets other fields.
@@ -227,15 +237,14 @@ async function updateNodePrice(
   jar.ingest(saveRes.headers);
   const saveHtml = await saveRes.text();
 
-  if (
-    saveRes.status < 300 &&
-    (saveHtml.includes('successfully updated') ||
-      saveHtml.includes('Node was successfully') ||
-      saveRes.url.includes(`/nodes/${nodeId}`))
-  ) {
+  const saveSuccess = saveRes.status < 300 &&
+    (saveHtml.includes('successfully updated') || saveHtml.includes('Node was successfully'));
+
+  if (saveSuccess) {
     return {
       success: true,
       message: `Node ${nodeId} price updated: $${baseUsdPerHour.toFixed(4)}/hr base, $${storageUsd.toFixed(4)}/GB storage, $${trafficUsd.toFixed(4)}/GB traffic (USD)`,
+      debug: `patchUrl=${patchUrl}`,
     };
   }
 
@@ -245,7 +254,7 @@ async function updateNodePrice(
   return {
     success: false,
     message: `Node ${nodeId} price update failed: ${errMsg}`,
-    debug: `patchUrl=${patchUrl} patchStatus=${saveRes.status} body=${saveSnippet}`,
+    debug: `patchUrl=${patchUrl} patchStatus=${saveRes.status} finalUrl=${saveRes.url} body=${saveSnippet}`,
   };
 }
 
