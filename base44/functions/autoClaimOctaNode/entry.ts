@@ -203,30 +203,48 @@ async function configureNode(
     };
   }
 
-  const editCsrf = extractCsrf(editHtml);
+  // ── Step B: Isolate the PATCH form and extract its fields ───────────────────
+  // The page has multiple forms (Sessions filter, etc.). The Configuration form
+  // is the one with a hidden _method=patch input — find it by that signature.
+  const patchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
+
+  // Locate _method=patch hidden input, then slice out its parent <form>…</form>
+  const methodInputMatch = editHtml.match(
+    /<input[^>]+name=["']_method["'][^>]+value=["']patch["'][^>]*>|<input[^>]+value=["']patch["'][^>]+name=["']_method["'][^>]*>/i
+  );
+
+  let formScope = editHtml; // fallback: scan whole page
+  if (methodInputMatch) {
+    const pos = editHtml.indexOf(methodInputMatch[0]);
+    const formStart = editHtml.lastIndexOf('<form', pos);
+    const formEnd = editHtml.indexOf('</form>', pos) + '</form>'.length;
+    if (formStart !== -1 && formEnd > formStart) {
+      formScope = editHtml.slice(formStart, formEnd);
+    }
+  }
+
+  const editCsrf = extractCsrf(formScope) ?? extractCsrf(editHtml);
   if (!editCsrf) {
+    // Dump all forms found to understand page structure
+    const formActions = [...editHtml.matchAll(/<form[^>]+action=["']([^"']+)["']/gi)].map(m => m[1]);
+    const turboFrames = [...editHtml.matchAll(/<turbo-frame[^>]+>/gi)].map(m => m[0].slice(0, 120));
     return {
       success: false,
-      message: `Node ${nodeId} config: could not extract CSRF from configuration page`,
-      debug: `editUrl=${editRes.url} htmlLen=${editHtml.length} htmlSnippet=${editHtml.slice(0, 400).replace(/\s+/g, ' ')}`,
+      message: `Node ${nodeId} config: could not extract CSRF`,
+      debug: `editUrl=${editRes.url} formActions=${JSON.stringify(formActions)} turboFrames=${JSON.stringify(turboFrames)}`,
     };
   }
 
-  // ── Step B: Build the PATCH body from existing form fields ──────────────────
-  const patchUrl = `${CUBE_BASE}/nodes/${nodeId}`;
-  const body = extractEditFormBody(editHtml, patchUrl);
-  // Also dump field names for debugging if save fails
-  const allFieldNames: string[] = [];
-  for (const [k] of body.entries()) allFieldNames.push(k);
-
-  // Ensure _method is PATCH (Rails method override)
+  const body = extractEditFormBody(formScope, patchUrl);
   body.set('_method', 'patch');
   body.set('authenticity_token', editCsrf);
 
-  // Inspect all raw input names from HTML (body only has submitted fields; checkboxes
-  // that are unchecked won't appear in body, but hidden siblings will)
+  // All input names from the scoped form (for field-name pattern matching below)
+  const allFieldNames: string[] = [];
+  for (const [k] of body.entries()) allFieldNames.push(k);
+
   const allInputs: string[] = [];
-  for (const m of editHtml.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)) {
+  for (const m of formScope.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)) {
     const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1] ?? '';
     if (name) allInputs.push(name);
   }
