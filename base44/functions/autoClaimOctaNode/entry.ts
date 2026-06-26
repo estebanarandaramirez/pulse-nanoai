@@ -176,6 +176,7 @@ async function configureNode(
 
   let editHtml = '';
   let editRes: Response | null = null;
+  const urlAttempts: string[] = [];
   for (const url of candidateUrls) {
     const res = await fetch(url, {
       redirect: 'follow',
@@ -187,8 +188,9 @@ async function configureNode(
     });
     jar.ingest(res.headers);
     const html = await res.text();
-    // Accept the first URL that returns a form targeting /hosting/nodes/:id
-    if (res.status < 400 && html.includes(`/hosting/nodes/${nodeId}`)) {
+    urlAttempts.push(`${url} → ${res.status} finalUrl=${res.url} len=${html.length}`);
+    // Accept the first URL that returns a non-error page that isn't the login page
+    if (res.status < 400 && !res.url.includes('/sign_in') && !res.url.includes('/login') && html.length > 200) {
       editHtml = html;
       editRes = res;
       break;
@@ -198,8 +200,8 @@ async function configureNode(
   if (!editRes || !editHtml) {
     return {
       success: false,
-      message: `Node ${nodeId} config: could not find configuration page (tried ${candidateUrls.length} URLs)`,
-      debug: `tried: ${candidateUrls.join(', ')}`,
+      message: `Node ${nodeId} config: could not find configuration page`,
+      debug: urlAttempts.join(' | '),
     };
   }
 
@@ -208,7 +210,7 @@ async function configureNode(
     return {
       success: false,
       message: `Node ${nodeId} config: could not extract CSRF from configuration page`,
-      debug: `editUrl=${editRes.url} editStatus=${editRes.status} htmlLen=${editHtml.length}`,
+      debug: `editUrl=${editRes.url} htmlLen=${editHtml.length} htmlSnippet=${editHtml.slice(0, 400).replace(/\s+/g, ' ')}`,
     };
   }
 
