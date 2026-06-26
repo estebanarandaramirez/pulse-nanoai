@@ -546,14 +546,14 @@ export default function Dashboard() {
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1.5 group">
+                            <div className="flex items-center gap-1.5">
                               <span className={`text-[11px] font-mono font-semibold ${activePlatform.activeColor}`}>
                                 ${rate.toFixed(3)}
                               </span>
                               {!isClore && (
                                 <button
                                   onClick={() => setEditingNodePrice({ node_id: nodeId, value: rate.toFixed(3) })}
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-purple"
+                                  className="text-muted-foreground hover:text-purple transition-colors"
                                   title="Edit price"
                                 >
                                   <Pencil className="w-2.5 h-2.5" />

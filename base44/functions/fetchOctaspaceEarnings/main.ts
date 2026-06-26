@@ -142,5 +142,6 @@ Deno.serve(async (req) => {
     nodes: nodeList,
     market_rates: [],
     last_fetched: new Date().toISOString(),
+    _raw_node_sample: nodes[0] ?? null,
   });
 });
