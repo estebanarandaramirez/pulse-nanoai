@@ -202,21 +202,6 @@ async function updateNodePrice(
   const currencyMatch = verifyHtml.match(/name=["']node_price\[currency_usd\]["'][^>]+value=["']([^"']+)["']|value=["']([^"']+)["'][^>]+name=["']node_price\[currency_usd\]["']/i);
   const savedCurrency = currencyMatch ? (currencyMatch[1] ?? currencyMatch[2]) : 'unknown';
 
-  // ── Step 4: POST to node_settings ────────────────────────────────────────────
-  const saveRes = await fetch(patchUrl, {
-    method: 'POST',
-    redirect: 'follow',
-    headers: {
-      ...commonHeaders,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': jar.toString(),
-      'Referer': configRes.url,
-      'Origin': CUBE_BASE,
-      'X-CSRF-Token': editCsrf,
-    },
-    body: body.toString(),
-  });
   return {
     success: true,
     message: `Node ${nodeId} price updated: $${savedBaseUsd}/hr base (raw=${savedBaseRaw}), currency_usd=${savedCurrency}`,
