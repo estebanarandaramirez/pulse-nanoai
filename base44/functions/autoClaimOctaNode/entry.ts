@@ -165,37 +165,66 @@ async function configureNode(
   commonHeaders: Record<string, string>,
   nodeId: string,
 ): Promise<{ success: boolean; message: string; debug?: string }> {
-  // ── Step A: GET the node edit page ──────────────────────────────────────────
-  const editRes = await fetch(`${CUBE_BASE}/hosting/nodes/${nodeId}/edit`, {
-    redirect: 'follow',
-    headers: {
-      ...commonHeaders,
-      'Cookie': jar.toString(),
-      'Referer': `${CUBE_BASE}/hosting/nodes`,
-    },
-  });
-  jar.ingest(editRes.headers);
-  const editHtml = await editRes.text();
+  // ── Step A: GET the node configuration page ─────────────────────────────────
+  // OctaSpace doesn't use /edit — try the node page directly, then with tab param
+  const candidateUrls = [
+    `${CUBE_BASE}/hosting/nodes/${nodeId}`,
+    `${CUBE_BASE}/hosting/nodes/${nodeId}?tab=configuration`,
+    `${CUBE_BASE}/hosting/nodes/${nodeId}/configuration`,
+    `${CUBE_BASE}/hosting/nodes/${nodeId}/edit`,
+  ];
+
+  let editHtml = '';
+  let editRes: Response | null = null;
+  for (const url of candidateUrls) {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      headers: {
+        ...commonHeaders,
+        'Cookie': jar.toString(),
+        'Referer': `${CUBE_BASE}/hosting/nodes`,
+      },
+    });
+    jar.ingest(res.headers);
+    const html = await res.text();
+    // Accept the first URL that returns a form targeting /hosting/nodes/:id
+    if (res.status < 400 && html.includes(`/hosting/nodes/${nodeId}`)) {
+      editHtml = html;
+      editRes = res;
+      break;
+    }
+  }
+
+  if (!editRes || !editHtml) {
+    return {
+      success: false,
+      message: `Node ${nodeId} config: could not find configuration page (tried ${candidateUrls.length} URLs)`,
+      debug: `tried: ${candidateUrls.join(', ')}`,
+    };
+  }
 
   const editCsrf = extractCsrf(editHtml);
   if (!editCsrf) {
     return {
       success: false,
-      message: `Node ${nodeId} config: could not extract CSRF from edit page`,
-      debug: `editUrl=${editRes.url} editStatus=${editRes.status}`,
+      message: `Node ${nodeId} config: could not extract CSRF from configuration page`,
+      debug: `editUrl=${editRes.url} editStatus=${editRes.status} htmlLen=${editHtml.length}`,
     };
   }
 
   // ── Step B: Build the PATCH body from existing form fields ──────────────────
   const patchUrl = `${CUBE_BASE}/hosting/nodes/${nodeId}`;
   const body = extractEditFormBody(editHtml, patchUrl);
+  // Also dump field names for debugging if save fails
+  const allFieldNames: string[] = [];
+  for (const [k] of body.entries()) allFieldNames.push(k);
 
   // Ensure _method is PATCH (Rails method override)
   body.set('_method', 'patch');
   body.set('authenticity_token', editCsrf);
 
-  // Inspect which checkbox/field names are actually present so we can match them
-  // regardless of whether OctaSpace uses node[services][], node[rental], etc.
+  // Inspect all raw input names from HTML (body only has submitted fields; checkboxes
+  // that are unchecked won't appear in body, but hidden siblings will)
   const allInputs: string[] = [];
   for (const m of editHtml.matchAll(/<input[^>]+name=["']([^"']+)["'][^>]*>/gi)) {
     const name = m[0].match(/\sname=["']([^"']+)["']/i)?.[1] ?? '';
@@ -203,7 +232,6 @@ async function configureNode(
   }
 
   // Enable Rental service ─────────────────────────────────────────────────────
-  // OctaSpace may use node[services][] array OR individual booleans like node[rental]
   const servicesArrayField = allInputs.find(n => n.match(/services\[\]/i));
   const rentalBoolField = allInputs.find(n => n.match(/\[rental\]/i));
   if (servicesArrayField) {
@@ -239,7 +267,7 @@ async function configureNode(
       'Accept': 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml',
       'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
       'Cookie': jar.toString(),
-      'Referer': `${CUBE_BASE}/hosting/nodes/${nodeId}/edit`,
+      'Referer': editRes.url,
       'Origin': CUBE_BASE,
       'X-CSRF-Token': editCsrf,
       'X-Turbo-Request-Id': turboReqId,
@@ -262,7 +290,7 @@ async function configureNode(
   return {
     success: false,
     message: `Node ${nodeId} config save failed: ${errMsg}`,
-    debug: `fields=${JSON.stringify(allInputs.slice(0, 20))} patchStatus=${saveRes.status}`,
+    debug: `configUrl=${editRes.url} fields=${JSON.stringify(allFieldNames.slice(0, 20))} patchStatus=${saveRes.status}`,
   };
 }
 
