@@ -532,9 +532,9 @@ Deno.serve(async (req) => {
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { node_token, node_name, node_id, auto_configure = true } = await req.json().catch(() => ({}));
-  if (!node_token && !node_id) {
-    return Response.json({ error: 'node_token or node_id is required' }, { status: 400 });
+  const { node_token, node_name, node_id, auto_configure = true, list_nodes = false } = await req.json().catch(() => ({}));
+  if (!node_token && !node_id && !list_nodes) {
+    return Response.json({ error: 'node_token, node_id, or list_nodes:true is required' }, { status: 400 });
   }
 
   const email = Deno.env.get('OCTASPACE_WEB_EMAIL');
@@ -547,29 +547,55 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Shared sign-in helper (avoids duplicating logic across test modes)
+  async function signInAndGetJar() {
+    const jar = new CookieJar();
+    const hdrs: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+    const loginPageRes = await fetch(`${CUBE_BASE}/users/sign_in`, { redirect: 'follow', headers: hdrs });
+    jar.ingest(loginPageRes.headers);
+    const loginHtml = await loginPageRes.text();
+    const formAction = extractFormAction(loginHtml, '/users/sign_in');
+    const signInBody = extractFormBody(loginHtml, formAction, { field: 'user[email]', value: email! });
+    signInBody.set('user[password]', password!);
+    signInBody.set('commit', 'Log in');
+    const signInRaw = await fetch(`${CUBE_BASE}${formAction}`, {
+      method: 'POST', redirect: 'manual',
+      headers: { ...hdrs, 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': jar.toString(), 'Origin': CUBE_BASE },
+      body: signInBody.toString(),
+    });
+    jar.ingest(signInRaw.headers);
+    if (signInRaw.status >= 400 || signInRaw.status === 200) throw new Error('Sign-in failed — check credentials');
+    return { jar, hdrs };
+  }
+
   try {
+    // list_nodes mode: sign in and return all node IDs visible in the hosting dashboard
+    if (list_nodes) {
+      const { jar, hdrs } = await signInAndGetJar();
+      const listRes = await fetch(`${CUBE_BASE}/hosting/nodes`, {
+        redirect: 'follow',
+        headers: { ...hdrs, 'Cookie': jar.toString() },
+      });
+      jar.ingest(listRes.headers);
+      const listHtml = await listRes.text();
+      // Extract all /hosting/nodes/:id hrefs and their adjacent text (node name)
+      const nodes: Array<{ id: string; path: string; context: string }> = [];
+      for (const m of listHtml.matchAll(/href=["'](\/(?:hosting\/)?nodes\/(\d+)[^"']*)["'][^>]*>([^<]{0,60})/gi)) {
+        const id = m[2];
+        if (!nodes.find(n => n.id === id)) {
+          nodes.push({ id, path: m[1], context: m[3].trim() });
+        }
+      }
+      return Response.json({ success: true, nodes, list_url: listRes.url, html_len: listHtml.length });
+    }
+
     // configure_only mode: skip claim, go straight to configureNode with the given node_id
     if (node_id && !node_token) {
-      const jar = new CookieJar();
-      const commonHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      };
-      // Sign in first so the session cookie is valid for configureNode
-      const loginPageRes = await fetch(`${CUBE_BASE}/users/sign_in`, { headers: commonHeaders });
-      jar.ingest(loginPageRes.headers);
-      const loginHtml = await loginPageRes.text();
-      const csrf = extractCsrf(loginHtml);
-      const signInRaw = await fetch(`${CUBE_BASE}/users/sign_in`, {
-        method: 'POST', redirect: 'manual',
-        headers: { ...commonHeaders, 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': jar.toString(), 'Origin': CUBE_BASE },
-        body: new URLSearchParams({ authenticity_token: csrf, 'user[email]': email, 'user[password]': password, 'user[remember_me]': '0', commit: 'Log in' }).toString(),
-      });
-      jar.ingest(signInRaw.headers);
-      if (signInRaw.status >= 400 || signInRaw.status === 200) {
-        return Response.json({ success: false, message: 'Sign-in failed — check credentials' });
-      }
+      const { jar, hdrs: commonHeaders } = await signInAndGetJar();
       const configResult = await configureNode(jar, commonHeaders, String(node_id));
       return Response.json({ success: configResult.success, node_id: String(node_id), configure_result: configResult });
     }
