@@ -547,28 +547,35 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Shared sign-in helper (avoids duplicating logic across test modes)
+  // Shared sign-in helper — mirrors Steps 1-2 of claimNodeOnCube exactly
   async function signInAndGetJar() {
     const jar = new CookieJar();
     const hdrs: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
     };
-    const loginPageRes = await fetch(`${CUBE_BASE}/users/sign_in`, { redirect: 'follow', headers: hdrs });
+    const loginPageRes = await fetch(`${CUBE_BASE}/users/sign_in`, { headers: hdrs });
     jar.ingest(loginPageRes.headers);
     const loginHtml = await loginPageRes.text();
-    const formAction = extractFormAction(loginHtml, '/users/sign_in');
-    const signInBody = extractFormBody(loginHtml, formAction, { field: 'user[email]', value: email! });
-    signInBody.set('user[password]', password!);
-    signInBody.set('commit', 'Log in');
-    const signInRaw = await fetch(`${CUBE_BASE}${formAction}`, {
+    const csrf = extractCsrf(loginHtml);
+    if (!csrf) throw new Error('Could not extract CSRF from sign-in page');
+    const signInRaw = await fetch(`${CUBE_BASE}/users/sign_in`, {
       method: 'POST', redirect: 'manual',
-      headers: { ...hdrs, 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': jar.toString(), 'Origin': CUBE_BASE },
-      body: signInBody.toString(),
+      headers: { ...hdrs, 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': jar.toString(), 'Referer': `${CUBE_BASE}/users/sign_in`, 'Origin': CUBE_BASE },
+      body: new URLSearchParams({ authenticity_token: csrf, 'user[email]': email!, 'user[password]': password!, 'user[remember_me]': '0', commit: 'Log in' }).toString(),
     });
     jar.ingest(signInRaw.headers);
-    if (signInRaw.status >= 400 || signInRaw.status === 200) throw new Error('Sign-in failed — check credentials');
+    const location = signInRaw.headers.get('location') ?? '';
+    if (signInRaw.status >= 400 || signInRaw.status === 200 || location.includes('/sign_in') || !location) {
+      throw new Error(`Sign-in failed — status=${signInRaw.status} location=${location}`);
+    }
+    const redirectTarget = location.startsWith('http') ? location : `${CUBE_BASE}${location}`;
+    const signInRes = await fetch(redirectTarget, { redirect: 'follow', headers: { ...hdrs, 'Cookie': jar.toString() } });
+    jar.ingest(signInRes.headers);
     return { jar, hdrs };
   }
 
