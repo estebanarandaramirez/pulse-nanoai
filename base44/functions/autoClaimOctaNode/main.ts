@@ -305,10 +305,12 @@ async function configureNode(
   // Surface any toast error
   const errMatch = saveHtml.match(/<div[^>]+flex-1[^>]*>\s*([^<]{5,}?)\s*<\/div>/i);
   const errMsg = errMatch ? errMatch[1].trim() : `HTTP ${saveRes.status}`;
+  // Strip tags from response body for readable validation errors
+  const saveSnippet = saveHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
   return {
     success: false,
     message: `Node ${nodeId} config save failed: ${errMsg}`,
-    debug: `configUrl=${editRes.url} fields=${JSON.stringify(allFieldNames.slice(0, 20))} patchStatus=${saveRes.status}`,
+    debug: `configUrl=${editRes.url} fields=${JSON.stringify(allFieldNames.slice(0, 20))} patchStatus=${saveRes.status} body=${saveSnippet}`,
   };
 }
 
