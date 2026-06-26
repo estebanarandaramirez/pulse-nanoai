@@ -110,19 +110,31 @@ Deno.serve(async (req) => {
   }
 
   // ── Build response ───────────────────────────────────────────────────────────
-  const nodeList = nodes.map((n: any) => ({
-    node_id: n.id ?? n.node_id,
-    gpu_name: n.system?.gpus?.[0]?.model ?? n.system?.gpu ?? n.gpu_model ?? n.gpu ?? 'Unknown GPU',
-    status: (n.status === 'online' || n.state === 'online' || n.status === 'active') ? 'active' : 'offline',
-    rate_per_hour: parseFloat(n.prices?.gpu_hour ?? n.price_per_hour ?? 0),
-    location: n.location?.country ?? '?',
-  }));
+  const nodeList = nodes.map((n: any) => {
+    // 24h income: try several field names the cube API might use
+    const income24hOcta = parseFloat(
+      n.income_24h ?? n.income?.day ?? n.earnings?.day ?? n.stat?.income_24h ??
+      n.day_income ?? n.statistics?.income_24h ?? 0
+    );
+    return {
+      node_id: n.id ?? n.node_id,
+      gpu_name: n.system?.gpus?.[0]?.model ?? n.system?.gpu ?? n.gpu_model ?? n.gpu ?? 'Unknown GPU',
+      status: (n.status === 'online' || n.state === 'online' || n.status === 'active') ? 'active' : 'offline',
+      rate_per_hour: parseFloat(n.prices?.gpu_hour ?? n.price_per_hour ?? 0),
+      location: n.location?.country ?? '?',
+      income_24h_octa: income24hOcta,
+      income_24h_usd: parseFloat((income24hOcta * octaPriceUsd).toFixed(4)),
+    };
+  });
 
   const activeNodes = nodeList.filter(n => n.status === 'active');
+  const total24hUsd = parseFloat(nodeList.reduce((s, n) => s + n.income_24h_usd, 0).toFixed(2));
 
   return Response.json({
     platform: 'OctaSpace',
+    // total_earnings_usd = wallet balance (not 24h income)
     total_earnings_usd: parseFloat((balanceOcta * octaPriceUsd).toFixed(2)),
+    total_income_24h_usd: total24hUsd,
     balance_octa: balanceOcta,
     octa_price_usd: octaPriceUsd,
     total_nodes: nodeList.length,

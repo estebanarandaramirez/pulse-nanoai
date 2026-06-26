@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, Trash2, ChevronDown, X, AlertTriangle
+  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, Trash2, ChevronDown, X, AlertTriangle, Pencil, Check
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
@@ -80,6 +80,31 @@ export default function Dashboard() {
   const [octaData, setOctaData]       = useState(null);
   const [octaLoading, setOctaLoading] = useState(false);
   const [octaStale, setOctaStale]     = useState(false);
+
+  // ── OctaSpace price editing ──────────────────────────────────────────────────
+  const [editingNodePrice, setEditingNodePrice] = useState(null); // { node_id, value }
+  const [savingNodePrice, setSavingNodePrice]   = useState(null); // node_id string
+
+  const saveNodePrice = async (nodeId, priceStr) => {
+    const price = parseFloat(priceStr);
+    if (!price || isNaN(price) || price <= 0) return;
+    setSavingNodePrice(nodeId);
+    try {
+      const res = await base44.functions.invoke('updateOctaNodePrice', { node_id: String(nodeId), base_usd: price });
+      if (res.data?.success) {
+        setOctaData(prev => ({
+          ...prev,
+          nodes: (prev?.nodes ?? []).map(n => n.node_id == nodeId ? { ...n, rate_per_hour: price } : n),
+        }));
+        setEditingNodePrice(null);
+      } else {
+        alert(`Price update failed: ${res.data?.message ?? 'unknown error'}`);
+      }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    }
+    setSavingNodePrice(null);
+  };
 
   // ── Data loaders (cache-first) ───────────────────────────────────────────────
   const isErrorResponse = (data) => !!(data?.error || data?.note);
@@ -186,7 +211,10 @@ export default function Dashboard() {
   const platformStale   = isClore ? cloreStale   : octaStale;
   const platformRefresh = isClore ? () => loadClore(true) : () => loadOcta(true);
 
-  const platformEarned  = platformData?.total_earnings_usd ?? 0;
+  // OctaSpace API only exposes 24h income per node; wallet balance is separate
+  const platformEarned  = isClore
+    ? (cloreData?.total_earnings_usd ?? 0)
+    : (octaData?.total_income_24h_usd ?? octaData?.total_earnings_usd ?? 0);
   const platformTotal   = isClore ? (cloreData?.total_servers  ?? 0) : (octaData?.total_nodes   ?? 0);
   const platformActive  = isClore ? (cloreData?.rented_servers ?? 0) : (octaData?.active_nodes  ?? 0);
   const platformServers = isClore ? (cloreData?.server_list    ?? []) : (octaData?.nodes         ?? []);
@@ -242,7 +270,7 @@ export default function Dashboard() {
         <StatCard
           label="Total Earned · All Platforms"
           value={`$${totalEarned.toFixed(2)}`}
-          sub="Clore.ai + OctaSpace"
+          sub="Clore.ai + OctaSpace 24h"
           color="accent" icon={Coins}
         />
         <StatCard
@@ -390,7 +418,7 @@ export default function Dashboard() {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="text-[9px] tracking-[2px] uppercase text-muted-foreground">
-              {activePlatform.label} · Total Earned
+              {activePlatform.label} · {isClore ? "Total Earned" : "Income · Last 24h"}
             </div>
             {platformLoading && !platformData ? (
               <div className="flex items-center gap-2 h-8">
@@ -457,7 +485,7 @@ export default function Dashboard() {
                   <tr className="border-b border-border">
                     {(isClore
                       ? ["Name", "GPU", "Status", "Rate/hr", "GPUs"]
-                      : ["Node", "GPU", "Status", "Rate/hr", "Location"]
+                      : ["Node", "GPU", "Status", "Rate/hr", "Income 24h", "Location"]
                     ).map(h => (
                       <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
                     ))}
@@ -467,8 +495,11 @@ export default function Dashboard() {
                   {platformServers.map((s, i) => {
                     const isActive = s.rented || s.status === 'active';
                     const rate = s.price_per_hour ?? s.rate_per_hour ?? 0;
+                    const nodeId = s.server_id ?? s.node_id;
+                    const isEditingThis = !isClore && editingNodePrice?.node_id == nodeId;
+                    const isSavingThis  = !isClore && savingNodePrice == nodeId;
                     return (
-                      <tr key={s.server_id ?? s.node_id ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                      <tr key={nodeId ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                         <td className="px-4 py-2.5 text-[10px] font-mono text-foreground">
                           {s.name ?? `Node ${i + 1}`}
                         </td>
@@ -484,9 +515,60 @@ export default function Dashboard() {
                             {s.rented ? "RENTED" : (s.status ?? "—").toUpperCase()}
                           </span>
                         </td>
-                        <td className={`px-4 py-2.5 text-[11px] font-mono font-semibold ${activePlatform.activeColor}`}>
-                          ${rate.toFixed(3)}
+                        <td className="px-4 py-2.5">
+                          {isEditingThis ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-mono text-muted-foreground">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0.001"
+                                value={editingNodePrice.value}
+                                onChange={e => setEditingNodePrice(p => ({ ...p, value: e.target.value }))}
+                                className="w-16 bg-muted border border-purple/40 rounded px-1 py-0.5 text-[10px] font-mono text-foreground focus:outline-none focus:border-purple"
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') saveNodePrice(nodeId, editingNodePrice.value);
+                                  if (e.key === 'Escape') setEditingNodePrice(null);
+                                }}
+                                autoFocus
+                              />
+                              <button
+                                onClick={() => saveNodePrice(nodeId, editingNodePrice.value)}
+                                disabled={isSavingThis}
+                                className="text-neon-green hover:text-neon-green/80 transition-colors disabled:opacity-40"
+                              >
+                                {isSavingThis
+                                  ? <RefreshCw className="w-3 h-3 animate-spin" />
+                                  : <Check className="w-3 h-3" />}
+                              </button>
+                              <button onClick={() => setEditingNodePrice(null)} className="text-muted-foreground hover:text-foreground transition-colors">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 group">
+                              <span className={`text-[11px] font-mono font-semibold ${activePlatform.activeColor}`}>
+                                ${rate.toFixed(3)}
+                              </span>
+                              {!isClore && (
+                                <button
+                                  onClick={() => setEditingNodePrice({ node_id: nodeId, value: rate.toFixed(3) })}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-purple"
+                                  title="Edit price"
+                                >
+                                  <Pencil className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </td>
+                        {!isClore && (
+                          <td className="px-4 py-2.5 text-[10px] font-mono text-neon-green">
+                            {(s.income_24h_usd ?? 0) > 0
+                              ? `$${(s.income_24h_usd).toFixed(2)}`
+                              : <span className="text-muted-foreground">—</span>}
+                          </td>
+                        )}
                         <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
                           {isClore ? (s.gpu_count ?? 1) : (s.location ?? "—")}
                         </td>
