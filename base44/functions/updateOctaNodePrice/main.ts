@@ -237,24 +237,42 @@ async function updateNodePrice(
   jar.ingest(saveRes.headers);
   const saveHtml = await saveRes.text();
 
-  const saveSuccess = saveRes.status < 300 &&
-    (saveHtml.includes('successfully updated') || saveHtml.includes('Node was successfully'));
+  // Rails PATCH on this site: success = 302 → 200 on the node page.
+  // Flash is delivered via Turbo and doesn't appear in the followed-redirect HTML.
+  const saveSuccess = saveRes.status < 300 && saveRes.url.includes(`/nodes/${nodeId}`);
 
-  if (saveSuccess) {
+  if (!saveSuccess) {
+    const errMatch = saveHtml.match(/<div[^>]+flex-1[^>]*>\s*([^<]{5,}?)\s*<\/div>/i);
+    const errMsg = errMatch ? errMatch[1].trim() : `HTTP ${saveRes.status}`;
+    const saveSnippet = saveHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
     return {
-      success: true,
-      message: `Node ${nodeId} price updated: $${baseUsdPerHour.toFixed(4)}/hr base, $${storageUsd.toFixed(4)}/GB storage, $${trafficUsd.toFixed(4)}/GB traffic (USD)`,
-      debug: `patchUrl=${patchUrl}`,
+      success: false,
+      message: `Node ${nodeId} price update failed: ${errMsg}`,
+      debug: `patchUrl=${patchUrl} patchStatus=${saveRes.status} finalUrl=${saveRes.url} snippet=${saveSnippet}`,
     };
   }
 
-  const errMatch = saveHtml.match(/<div[^>]+flex-1[^>]*>\s*([^<]{5,}?)\s*<\/div>/i);
-  const errMsg = errMatch ? errMatch[1].trim() : `HTTP ${saveRes.status}`;
-  const saveSnippet = saveHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
+  // Re-GET the config page to read back what was actually saved
+  const verifyRes = await fetch(`${CUBE_BASE}/nodes/${nodeId}?type=configuration`, {
+    redirect: 'follow',
+    headers: { ...commonHeaders, 'Cookie': jar.toString() },
+  });
+  jar.ingest(verifyRes.headers);
+  const verifyHtml = await verifyRes.text();
+
+  // Extract base_usd integer from the form input to confirm the saved value
+  const savedBaseMatch = verifyHtml.match(/name=["']node_price\[base_usd\]["'][^>]+value=["']([^"']+)["']|value=["']([^"']+)["'][^>]+name=["']node_price\[base_usd\]["']/i);
+  const savedBaseRaw = savedBaseMatch ? (savedBaseMatch[1] ?? savedBaseMatch[2]) : 'unknown';
+  const savedBaseUsd = savedBaseRaw !== 'unknown' ? (Number(savedBaseRaw) / 10000).toFixed(4) : 'unknown';
+
+  // Extract displayed currency mode
+  const currencyMatch = verifyHtml.match(/name=["']node_price\[currency_usd\]["'][^>]+value=["']([^"']+)["']|value=["']([^"']+)["'][^>]+name=["']node_price\[currency_usd\]["']/i);
+  const savedCurrency = currencyMatch ? (currencyMatch[1] ?? currencyMatch[2]) : 'unknown';
+
   return {
-    success: false,
-    message: `Node ${nodeId} price update failed: ${errMsg}`,
-    debug: `patchUrl=${patchUrl} patchStatus=${saveRes.status} finalUrl=${saveRes.url} body=${saveSnippet}`,
+    success: true,
+    message: `Node ${nodeId} price save sent. Verified saved base_usd: ${savedBaseRaw} (≈$${savedBaseUsd}/hr), currency_usd: ${savedCurrency}`,
+    debug: `patchUrl=${patchUrl} sentBaseInt=${baseInt} sentCurrencyUsd=1`,
   };
 }
 
