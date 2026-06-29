@@ -154,7 +154,6 @@ Deno.serve(async (req) => {
 
     // ── For each node: scrape config page for current rate/hr ───────────────────
     let octaPrice = 0.085;
-    let _debug_config_snippet: string | null = null;
     for (const node of nodes) {
       try {
         const configRes = await fetch(`${CUBE_BASE}/nodes/${node.node_id}?type=configuration`, {
@@ -163,20 +162,6 @@ Deno.serve(async (req) => {
         });
         jar.ingest(configRes.headers);
         const configHtml = await configRes.text();
-
-        // Capture config HTML around currency_usd for the first node with base_usd content (for debugging)
-        if (_debug_config_snippet === null) {
-          const currIdx = configHtml.indexOf('currency_usd');
-          if (currIdx >= 0) {
-            _debug_config_snippet = configHtml.slice(Math.max(0, currIdx - 200), Math.min(configHtml.length, currIdx + 400));
-          } else {
-            // currency_usd not found — show base_usd context or page title
-            const baseIdx = configHtml.indexOf('base_usd');
-            _debug_config_snippet = baseIdx >= 0
-              ? '[no currency_usd] base_usd ctx: ' + configHtml.slice(Math.max(0, baseIdx - 100), baseIdx + 300)
-              : '[neither currency_usd nor base_usd found in config HTML] status=' + configRes.status + ' url=' + configRes.url;
-          }
-        }
 
         // base_usd integer (×10000) from the form input
         const baseMatch = configHtml.match(/name=["']node_price\[base_usd\]["'][^>]+value=["']([^"']+)["']/)
@@ -206,28 +191,13 @@ Deno.serve(async (req) => {
         node.rate_per_hour = parseFloat(ratePerHour.toFixed(4));
         node.currency_mode = currencyUsd === 1 ? 'USD' : 'OCTA';
         node.base_usd_raw = baseRaw;
-      } catch (e: any) {
+      } catch {
         node.rate_per_hour = 0;
         node.currency_mode = 'unknown';
-        node.error = e.message;
       }
     }
 
-    // Include a small HTML snippet for the first node row for debugging availability detection
-    const firstNodeId = nodes[0]?.node_id;
-    let _debug_row_snippet: string | null = null;
-    if (firstNodeId) {
-      const idx = listHtml.indexOf(`/nodes/${firstNodeId}`);
-      if (idx > 0) {
-        const rowStart = listHtml.lastIndexOf('<tr', idx);
-        const rowEnd = listHtml.indexOf('</tr>', idx) + 5;
-        if (rowStart > 0 && rowEnd > rowStart) {
-          _debug_row_snippet = listHtml.slice(rowStart, Math.min(rowEnd, rowStart + 800));
-        }
-      }
-    }
-
-    return Response.json({ success: true, nodes, scraped_from: listRes.url, _debug_row_snippet, _debug_config_snippet });
+    return Response.json({ success: true, nodes, scraped_from: listRes.url });
   } catch (err: any) {
     return Response.json({ success: false, message: `Error: ${err.message}` }, { status: 500 });
   }
