@@ -183,11 +183,9 @@ Deno.serve(async (req) => {
           ?? configHtml.match(/value=["']([^"']+)["'][^>]+name=["']node_price\[base_usd\]["']/);
         const baseRaw = baseMatch ? parseFloat(baseMatch[1]) : 0;
 
-        // currency_usd: Rails boolean checkbox pattern.
-        // A hidden input (value="0") is always in the HTML; the checkbox (value="1") is checked only in USD mode.
-        // We look for the `checked` attribute on the currency_usd input — hidden inputs never have `checked`.
-        const usdChecked = /<input[^>]*name=["']node_price\[currency_usd\]["'][^>]*\bchecked\b/i.test(configHtml)
-          || /<input[^>]*\bchecked\b[^>]*name=["']node_price\[currency_usd\]["']/i.test(configHtml);
+        // OctaSpace uses a Stimulus.js currency toggle — no checkbox, no 'checked' attribute.
+        // The active currency is stored in data-currency-toggle-initial-value="USD"|"OCTA".
+        const usdChecked = /data-currency-toggle-initial-value=["']USD["']/i.test(configHtml);
         const currencyUsd = usdChecked ? 1 : 0;
 
         let ratePerHour = 0;
