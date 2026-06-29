@@ -41,6 +41,19 @@
     },
     "user_email": {
       "type": "string"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["Clore.ai", "OctaSpace", "RunPod", "Vast.ai", "Salad"]
+    },
+    "platform_node_id": {
+      "type": "string"
+    },
+    "active_platform": {
+      "type": "string"
+    },
+    "node_id": {
+      "type": "string"
     }
   },
   "required": [
