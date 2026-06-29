@@ -11,6 +11,16 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const CLORE_BASE = 'https://api.clore.ai/v1';
 
+async function timedFetch(url: string, options: RequestInit = {}, ms = 10000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   const user = await base44.auth.me();
@@ -31,8 +41,8 @@ Deno.serve(async (req) => {
   const headers = { 'auth': apiKey };
 
   try {
-    // Fetch all servers registered under Pulse's Clore.ai account
-    const serversRes = await fetch(`${CLORE_BASE}/my_servers`, { headers });
+    // Fetch all servers registered under Pulse's Clore.ai account (10s timeout)
+    const serversRes = await timedFetch(`${CLORE_BASE}/my_servers`, { headers });
     if (!serversRes.ok) {
       const err = await serversRes.text();
       return Response.json({ error: `Clore.ai servers fetch failed: ${serversRes.status}`, details: err }, { status: 500 });
@@ -41,7 +51,7 @@ Deno.serve(async (req) => {
     const servers: any[] = serversData.servers ?? [];
 
     // Fetch account balance (contains total earnings)
-    const balanceRes = await fetch(`${CLORE_BASE}/balance`, { headers });
+    const balanceRes = await timedFetch(`${CLORE_BASE}/balance`, { headers });
     let totalEarningsUsd = 0;
     if (balanceRes.ok) {
       const balanceData = await balanceRes.json();
@@ -57,7 +67,12 @@ Deno.serve(async (req) => {
       gpu_count: s.gpu_array?.length ?? s.specs?.gpus_count ?? 1,
       status: s.status ?? 'unknown',
       rented: s.rented ?? false,
-      price_per_hour: parseFloat((s.price?.usd?.on_demand_usd ?? s.price?.on_demand ?? 0).toFixed(4)),
+      // on_demand_usd is in milli-USD (×1000), USD/day for the whole server
+      price_per_hour: (() => {
+        const gpuCount = s.gpu_array?.length ?? s.specs?.gpus_count ?? 1;
+        const dailyMilliUsd = parseFloat(s.price?.usd?.on_demand_usd ?? 0);
+        return dailyMilliUsd > 0 ? parseFloat((dailyMilliUsd / 1000 / gpuCount / 24).toFixed(4)) : 0;
+      })(),
       reliability: s.reliability ?? null,
     }));
 
@@ -66,30 +81,38 @@ Deno.serve(async (req) => {
     // Fetch public marketplace to get real market rates
     let marketRates: { name: string; price_per_hour: number }[] = [];
     try {
-      const mktRes = await fetch(`${CLORE_BASE}/marketplace`, {
+      const mktRes = await timedFetch(`${CLORE_BASE}/marketplace`, {
         headers: { 'auth': apiKey },
-      });
+      }, 8000);
       let mktData: any = {};
       try { mktData = await mktRes.json(); } catch { /* leave mktData empty */ }
-      let marketDebug = null;
 
-      if (!marketDebug) {
+      {
         // Response: { servers: [...], my_servers: [...], code: 0 }
         const listings: any[] = mktData.servers ?? [];
 
-        const rateMap: Record<string, number> = {};
+        // on_demand_usd is in milli-USD (×1000), USD/day for the whole server
+        // average across listings of the same GPU model to get per-GPU per-hour
+        const rateMap: Record<string, { sum: number; count: number }> = {};
         for (const item of listings) {
-          const price = parseFloat(item.price?.usd?.on_demand_usd ?? 0);
-          if (!price) continue;
-          // gpu_array has one entry per GPU card (may repeat); deduplicate per listing
+          const totalDailyMilliUsd = parseFloat(item.price?.usd?.on_demand_usd ?? 0);
+          if (!totalDailyMilliUsd) continue;
+          const gpuCount = (item.gpu_array?.length) || 1;
+          const pricePerGpuHour = totalDailyMilliUsd / 1000 / gpuCount / 24;
           const models: string[] = [...new Set<string>(item.gpu_array ?? [])];
           for (const model of models) {
             if (!model) continue;
-            if (!rateMap[model] || price > rateMap[model]) rateMap[model] = price;
+            if (!rateMap[model]) rateMap[model] = { sum: 0, count: 0 };
+            rateMap[model].sum += pricePerGpuHour;
+            rateMap[model].count += 1;
           }
         }
         marketRates = Object.entries(rateMap)
-          .map(([name, price_per_hour]) => ({ name, price_per_hour: parseFloat(price_per_hour.toFixed(4)) }))
+          .map(([name, { sum, count }]) => ({
+            name,
+            price_per_hour: parseFloat((sum / count).toFixed(4)),
+            listing_count: count,
+          }))
           .sort((a, b) => b.price_per_hour - a.price_per_hour);
       }
     } catch { /* market rates remain empty, frontend uses fallback */ }

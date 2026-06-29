@@ -10,7 +10,7 @@ import SectionTitle from "../components/shared/SectionTitle";
 
 // ─── Cache helpers (localStorage, 5-min TTL) ────────────────────────────────
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 
 function readCache(key) {
   try {
@@ -261,12 +261,32 @@ export default function Dashboard() {
 
       {/* ── Global stats row ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard
-          label="Daily Projection"
-          value={`$${projectedDaily.toFixed(2)}`}
-          sub={projectedDaily > 0 ? "OctaSpace online + Clore.ai · est." : "No online nodes"}
-          color="primary" icon={TrendingUp}
-        />
+        {/* Daily Projection — inline so we can add the info tooltip */}
+        <div className="relative">
+          <StatCard
+            label="Daily Projection"
+            value={`$${projectedDaily.toFixed(2)}`}
+            sub={projectedDaily > 0 ? "OctaSpace online + Clore.ai · est." : "No online nodes"}
+            color="primary" icon={TrendingUp}
+          />
+          <div className="absolute top-3 right-8 z-20"
+            onMouseEnter={() => setShowProjectionInfo(true)}
+            onMouseLeave={() => setShowProjectionInfo(false)}
+          >
+            <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-help transition-colors" />
+            {showProjectionInfo && (
+              <div className="absolute right-0 top-5 z-50 w-72 bg-card border border-border rounded-md p-3 text-[9px] font-mono text-muted-foreground shadow-lg">
+                <div className="text-foreground font-semibold mb-1">How we calculate this</div>
+                <div>Rate × 16h/day — assuming your GPU is idle and available to renters for:</div>
+                <div className="mt-1 pl-2 space-y-0.5">
+                  <div>· 8h overnight (while you sleep)</div>
+                  <div>· 8h during the workday (9-to-5)</div>
+                </div>
+                <div className="mt-1 text-muted-foreground/70">The remaining 8h are reserved for personal use (gaming, etc.)</div>
+              </div>
+            )}
+          </div>
+        </div>
         <StatCard
           label="Earnings · All Platforms"
           value={`$${total24hIncome.toFixed(2)}`}
@@ -286,29 +306,8 @@ export default function Dashboard() {
       {projectedDaily > 0 && (
         <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
           <div className="flex items-center gap-2">
-            <SectionTitle>
-              Daily Revenue Projection
-            </SectionTitle>
-            <span className="text-[8px] text-muted-foreground normal-case tracking-normal font-sans font-normal">
-              estimated · 16h/day
-            </span>
-            <div className="relative"
-              onMouseEnter={() => setShowProjectionInfo(true)}
-              onMouseLeave={() => setShowProjectionInfo(false)}
-            >
-              <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-help transition-colors" />
-              {showProjectionInfo && (
-                <div className="absolute left-0 top-5 z-50 w-72 bg-card border border-border rounded-md p-3 text-[9px] font-mono text-muted-foreground shadow-lg">
-                  <div className="text-foreground font-semibold mb-1">How we calculate this</div>
-                  <div>Rate × 16h/day — assuming your GPU is idle and available to renters for:</div>
-                  <div className="mt-1 pl-2 space-y-0.5">
-                    <div>· 8h overnight (while you sleep)</div>
-                    <div>· 8h during the workday (9-to-5)</div>
-                  </div>
-                  <div className="mt-1 text-muted-foreground/70">The remaining 8h are reserved for personal use (gaming, etc.)</div>
-                </div>
-              )}
-            </div>
+            <SectionTitle>Daily Revenue Projection</SectionTitle>
+            <span className="text-[8px] text-muted-foreground normal-case tracking-normal font-sans font-normal">estimated · 16h/day</span>
           </div>
           <div className="mt-3 h-40">
             <ResponsiveContainer width="100%" height="100%">
@@ -483,9 +482,7 @@ export default function Dashboard() {
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-[10px] font-mono text-neon-green">
-                                {(s.income_24h_usd ?? 0) > 0
-                                  ? `$${s.income_24h_usd.toFixed(2)}`
-                                  : <span className="text-muted-foreground">—</span>}
+                                ${(s.income_24h_usd ?? 0).toFixed(2)}
                               </td>
                             </tr>
                           );
@@ -587,7 +584,7 @@ export default function Dashboard() {
                                 ${(s.price_per_hour ?? 0).toFixed(3)}
                               </td>
                               <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
-                                <span className="text-muted-foreground">—</span>
+                                $0.00
                               </td>
                             </tr>
                           );

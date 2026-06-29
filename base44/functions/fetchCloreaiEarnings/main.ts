@@ -67,11 +67,11 @@ Deno.serve(async (req) => {
       gpu_count: s.gpu_array?.length ?? s.specs?.gpus_count ?? 1,
       status: s.status ?? 'unknown',
       rented: s.rented ?? false,
-      // on_demand_usd = USD/day for the whole server → divide by GPU count and 24h to get per-GPU/hr
+      // on_demand_usd is in milli-USD (×1000), USD/day for the whole server
       price_per_hour: (() => {
         const gpuCount = s.gpu_array?.length ?? s.specs?.gpus_count ?? 1;
-        const dailyUsd = parseFloat(s.price?.usd?.on_demand_usd ?? 0);
-        return dailyUsd > 0 ? parseFloat((dailyUsd / gpuCount / 24).toFixed(4)) : 0;
+        const dailyMilliUsd = parseFloat(s.price?.usd?.on_demand_usd ?? 0);
+        return dailyMilliUsd > 0 ? parseFloat((dailyMilliUsd / 1000 / gpuCount / 24).toFixed(4)) : 0;
       })(),
       reliability: s.reliability ?? null,
     }));
@@ -95,10 +95,11 @@ Deno.serve(async (req) => {
         // then average across listings of the same GPU model
         const rateMap: Record<string, { sum: number; count: number }> = {};
         for (const item of listings) {
-          const totalDailyUsd = parseFloat(item.price?.usd?.on_demand_usd ?? 0);
-          if (!totalDailyUsd) continue;
+          // on_demand_usd is in milli-USD (×1000), USD/day for the whole server
+          const totalDailyMilliUsd = parseFloat(item.price?.usd?.on_demand_usd ?? 0);
+          if (!totalDailyMilliUsd) continue;
           const gpuCount = (item.gpu_array?.length) || 1;
-          const pricePerGpuHour = totalDailyUsd / gpuCount / 24;
+          const pricePerGpuHour = totalDailyMilliUsd / 1000 / gpuCount / 24;
           const models: string[] = [...new Set<string>(item.gpu_array ?? [])];
           for (const model of models) {
             if (!model) continue;
