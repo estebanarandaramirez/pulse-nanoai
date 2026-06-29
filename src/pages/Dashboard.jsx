@@ -608,27 +608,46 @@ export default function Dashboard() {
       </div>
 
       {/* ── Market Prices ── */}
-      {(cloreData?.market_rates?.length > 0 || cloreLoading) && (
-        <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
-          <div className="flex items-center justify-between mb-3">
-            <SectionTitle>Market Prices</SectionTitle>
-            <span className="text-[9px] font-mono text-muted-foreground">Clore.ai · avg per GPU/hr · {cloreData?.market_rates?.length ?? 0} models</span>
+      <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
+        <div className="flex items-center justify-between mb-3">
+          <SectionTitle>Market Prices</SectionTitle>
+          <div className="flex items-center gap-2">
+            {cloreLoading && <div className="w-3 h-3 border border-cyan border-t-transparent rounded-full animate-spin" />}
+            <span className="text-[9px] font-mono text-muted-foreground">
+              Clore.ai · avg per GPU/hr{cloreData?.market_rates?.length ? ` · ${cloreData.market_rates.length} models` : ''}
+            </span>
+            <button
+              onClick={() => loadClore(true)}
+              disabled={cloreLoading}
+              className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+              title="Refresh market data"
+            >
+              <RefreshCw className={`w-3 h-3 ${cloreLoading ? "animate-spin" : ""}`} />
+            </button>
           </div>
-          {cloreLoading && !cloreData?.market_rates?.length ? (
-            <div className="text-[10px] font-mono text-muted-foreground">Loading market data...</div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-              {(cloreData?.market_rates ?? []).slice(0, 25).map(r => (
-                <div key={r.name} className="bg-muted/20 border border-border rounded px-3 py-2 hover:border-cyan/30 transition-colors">
-                  <div className="text-[9px] font-mono text-muted-foreground truncate" title={r.name}>{r.name}</div>
-                  <div className="text-[11px] font-mono font-semibold text-cyan mt-0.5">${r.price_per_hour.toFixed(3)}<span className="text-[8px] text-muted-foreground font-normal">/hr</span></div>
-                  {r.listing_count && <div className="text-[8px] font-mono text-muted-foreground/60 mt-0.5">{r.listing_count} listing{r.listing_count !== 1 ? 's' : ''}</div>}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-      )}
+        {cloreLoading && !cloreData?.market_rates?.length ? (
+          <div className="text-[10px] font-mono text-muted-foreground py-4 text-center">Fetching market listings...</div>
+        ) : !cloreData?.market_rates?.length ? (
+          <div className="text-[10px] font-mono text-muted-foreground py-4 text-center">
+            No market data — click refresh to load Clore.ai listings.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+            {cloreData.market_rates.slice(0, 25).map(r => (
+              <div key={r.name} className="bg-muted/20 border border-border rounded px-3 py-2 hover:border-cyan/30 transition-colors">
+                <div className="text-[9px] font-mono text-muted-foreground truncate" title={r.name}>{r.name}</div>
+                <div className="text-[11px] font-mono font-semibold text-cyan mt-0.5">
+                  ${r.price_per_hour.toFixed(3)}<span className="text-[8px] text-muted-foreground font-normal">/hr</span>
+                </div>
+                {r.listing_count > 0 && (
+                  <div className="text-[8px] font-mono text-muted-foreground/60 mt-0.5">{r.listing_count} listing{r.listing_count !== 1 ? 's' : ''}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
     </div>
   );
