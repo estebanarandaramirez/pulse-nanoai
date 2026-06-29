@@ -11,6 +11,16 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const CLORE_BASE = 'https://api.clore.ai/v1';
 
+async function timedFetch(url: string, options: RequestInit = {}, ms = 10000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   const user = await base44.auth.me();
@@ -31,8 +41,8 @@ Deno.serve(async (req) => {
   const headers = { 'auth': apiKey };
 
   try {
-    // Fetch all servers registered under Pulse's Clore.ai account
-    const serversRes = await fetch(`${CLORE_BASE}/my_servers`, { headers });
+    // Fetch all servers registered under Pulse's Clore.ai account (10s timeout)
+    const serversRes = await timedFetch(`${CLORE_BASE}/my_servers`, { headers });
     if (!serversRes.ok) {
       const err = await serversRes.text();
       return Response.json({ error: `Clore.ai servers fetch failed: ${serversRes.status}`, details: err }, { status: 500 });
@@ -41,7 +51,7 @@ Deno.serve(async (req) => {
     const servers: any[] = serversData.servers ?? [];
 
     // Fetch account balance (contains total earnings)
-    const balanceRes = await fetch(`${CLORE_BASE}/balance`, { headers });
+    const balanceRes = await timedFetch(`${CLORE_BASE}/balance`, { headers });
     let totalEarningsUsd = 0;
     if (balanceRes.ok) {
       const balanceData = await balanceRes.json();
@@ -66,9 +76,9 @@ Deno.serve(async (req) => {
     // Fetch public marketplace to get real market rates
     let marketRates: { name: string; price_per_hour: number }[] = [];
     try {
-      const mktRes = await fetch(`${CLORE_BASE}/marketplace`, {
+      const mktRes = await timedFetch(`${CLORE_BASE}/marketplace`, {
         headers: { 'auth': apiKey },
-      });
+      }, 8000);
       let mktData: any = {};
       try { mktData = await mktRes.json(); } catch { /* leave mktData empty */ }
       let marketDebug = null;

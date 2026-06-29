@@ -100,6 +100,8 @@ export default function Dashboard() {
       }
     }
     setCloreLoading(true);
+    // Stop spinner after 25s regardless — server function has its own 10s timeouts per fetch
+    const stopSpinner = setTimeout(() => setCloreLoading(false), 25000);
     try {
       const res = await base44.functions.invoke("fetchCloreaiEarnings", {});
       if (res.data) {
@@ -107,6 +109,7 @@ export default function Dashboard() {
         if (!isErrorResponse(res.data)) { setCloreStale(false); writeCache('clore', res.data); }
       }
     } catch {}
+    clearTimeout(stopSpinner);
     setCloreLoading(false);
   }, []);
 
@@ -162,10 +165,29 @@ export default function Dashboard() {
   // ── Derived values ───────────────────────────────────────────────────────────
   const plsM = ((plsData?.supply?.uiAmount || 18400000) / 1e6).toFixed(1);
   const activeGPUs = myGPUs.filter(g => g.status === 'active');
-  const projectedDaily = activeGPUs.reduce((s, g) => s + ((g.rate_per_hour || 0) * 24 * 0.9), 0);
-  const total24hIncome = parseFloat(((cloreData?.total_earnings_usd ?? 0) + (octaData?.total_income_24h_usd ?? 0)).toFixed(2));
-  const octaNodesDisplay = octaNodes.length ? octaNodes : (octaData?.nodes ?? []);
   const cloreServers = cloreData?.server_list ?? [];
+
+  // Filter OctaSpace nodes: match by platform_node_id if any GPU has one set,
+  // otherwise exclude nodes with no parsed gpu_name (e.g. test/dummy nodes like DASDAS)
+  const hasNodeIds = myGPUs.some(g => g.platform_node_id);
+  const rawOctaNodes = octaNodes.length ? octaNodes : (octaData?.nodes ?? []);
+  const octaNodesDisplay = rawOctaNodes.filter(n =>
+    hasNodeIds
+      ? myGPUs.some(g => g.platform_node_id === String(n.node_id))
+      : !!n.gpu_name?.trim()
+  );
+
+  // Earnings: sum actual 24h income from scraped OctaSpace nodes + Clore wallet balance
+  const octaIncome24h = octaNodes.reduce((s, n) => s + (n.income_24h_usd ?? 0), 0);
+  const total24hIncome = parseFloat(((cloreData?.total_earnings_usd ?? 0) + octaIncome24h).toFixed(2));
+
+  // Projection: use live scraped rates rather than stale Supabase daemon records
+  const octaProjected = octaNodes
+    .filter(n => n.status === 'online')
+    .reduce((s, n) => s + (n.rate_per_hour ?? 0) * 24, 0);
+  const cloreProjected = cloreServers
+    .reduce((s, sv) => s + (sv.price_per_hour ?? 0) * 24, 0);
+  const projectedDaily = parseFloat((octaProjected + cloreProjected).toFixed(2));
 
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const revenueChart = DAYS.map(day => ({ day, revenue: parseFloat(projectedDaily.toFixed(2)) }));
@@ -212,7 +234,7 @@ export default function Dashboard() {
         <StatCard
           label="Daily Projection"
           value={`$${projectedDaily.toFixed(2)}`}
-          sub={activeGPUs.length > 0 ? `${activeGPUs.length} GPU${activeGPUs.length !== 1 ? "s" : ""} active · est.` : "No active GPUs"}
+          sub={projectedDaily > 0 ? "OctaSpace online + Clore.ai · est." : "No online nodes"}
           color="primary" icon={TrendingUp}
         />
         <StatCard
@@ -328,7 +350,7 @@ export default function Dashboard() {
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-border bg-muted/5">
-                          {["Node", "GPU", "Status", "Rate/hr", "Income 24h"].map(h => (
+                          {["Node", "GPU", "Online", "Rental", "Rate/hr", "Income 24h"].map(h => (
                             <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
                           ))}
                         </tr>
@@ -351,14 +373,25 @@ export default function Dashboard() {
                               </td>
                               <td className="px-4 py-2.5">
                                 <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
-                                  isBusy
-                                    ? "text-amber border-amber/40 bg-amber/10"
-                                    : isOnline
+                                  isOnline
                                     ? "text-neon-green border-neon-green/40 bg-neon-green/10"
                                     : "text-muted-foreground border-border bg-muted/20"
                                 }`}>
-                                  {isBusy ? "BUSY" : isOnline ? "IDLE" : "OFFLINE"}
+                                  {isOnline ? "ONLINE" : "OFFLINE"}
                                 </span>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                {isOnline ? (
+                                  <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                                    isBusy
+                                      ? "text-amber border-amber/40 bg-amber/10"
+                                      : "text-muted-foreground border-border bg-muted/20"
+                                  }`}>
+                                    {isBusy ? "BUSY" : "IDLE"}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground text-[9px] font-mono">—</span>
+                                )}
                               </td>
                               <td className="px-4 py-2.5">
                                 {isEditingThis ? (
@@ -462,7 +495,7 @@ export default function Dashboard() {
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-border bg-muted/5">
-                          {["Server", "GPU", "Status", "Rate/hr", "GPUs"].map(h => (
+                          {["Server", "GPU", "Online", "Rental", "Rate/hr", "GPUs"].map(h => (
                             <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
                           ))}
                         </tr>
@@ -470,7 +503,6 @@ export default function Dashboard() {
                       <tbody>
                         {cloreServers.map((s, i) => {
                           const isRented = s.rented;
-                          const isUnknown = !s.status || s.status === 'unknown';
                           return (
                             <tr key={s.server_id ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                               <td className="px-4 py-2.5 text-[10px] font-mono text-foreground max-w-[200px] truncate" title={s.name}>
@@ -480,14 +512,17 @@ export default function Dashboard() {
                                 {s.gpu_model ?? '—'}
                               </td>
                               <td className="px-4 py-2.5">
+                                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border text-neon-green border-neon-green/40 bg-neon-green/10">
+                                  ACTIVE
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5">
                                 <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
                                   isRented
                                     ? "text-amber border-amber/40 bg-amber/10"
-                                    : isUnknown
-                                    ? "text-muted-foreground border-border bg-muted/20"
-                                    : "text-neon-green border-neon-green/40 bg-neon-green/10"
+                                    : "text-muted-foreground border-border bg-muted/20"
                                 }`}>
-                                  {isRented ? "RENTED" : (s.status ?? "UNKNOWN").toUpperCase()}
+                                  {isRented ? "RENTED" : "IDLE"}
                                 </span>
                               </td>
                               <td className="px-4 py-2.5 text-[11px] font-mono font-semibold text-cyan">
