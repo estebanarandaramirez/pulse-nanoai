@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, ChevronDown, X, Pencil, Check
+  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, ChevronDown, X, Pencil, Check, Info, Link2
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
@@ -68,6 +68,31 @@ export default function Dashboard() {
   // ── OctaSpace price editing ──────────────────────────────────────────────────
   const [editingNodePrice, setEditingNodePrice] = useState(null); // { node_id, value }
   const [savingNodePrice, setSavingNodePrice]   = useState(null); // node_id string
+
+  // ── OctaSpace node linking ───────────────────────────────────────────────────
+  const [linkAssignments, setLinkAssignments] = useState({}); // { [octa_node_id]: gpu_base44_id }
+  const [linkingNode, setLinkingNode]         = useState(null);
+  const [showProjectionInfo, setShowProjectionInfo] = useState(false);
+
+  const linkOctaNode = async (nodeId, gpuBase44Id) => {
+    if (!gpuBase44Id) return;
+    setLinkingNode(nodeId);
+    try {
+      const res = await base44.functions.invoke('assignPlatformNode', {
+        gpu_base44_id: gpuBase44Id,
+        platform_node_id: String(nodeId),
+        platform: 'OctaSpace',
+      });
+      if (res.data?.success) {
+        const fleetRes = await base44.functions.invoke('getGPUFleet', { user_email: user.email });
+        setMyGPUs(fleetRes.data?.gpus || []);
+        setLinkAssignments(prev => { const n = { ...prev }; delete n[nodeId]; return n; });
+      } else {
+        alert(`Link failed: ${res.data?.error ?? 'unknown error'}`);
+      }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    setLinkingNode(null);
+  };
 
   const saveNodePrice = async (nodeId, priceStr) => {
     const price = parseFloat(priceStr);
@@ -167,26 +192,27 @@ export default function Dashboard() {
   const activeGPUs = myGPUs.filter(g => g.status === 'active');
   const cloreServers = cloreData?.server_list ?? [];
 
-  // Filter OctaSpace nodes: match by platform_node_id if any GPU has one set,
-  // otherwise exclude nodes with no parsed gpu_name (e.g. test/dummy nodes like DASDAS)
-  const hasNodeIds = myGPUs.some(g => g.platform_node_id);
+  // Filter OctaSpace nodes strictly by platform_node_id match
   const rawOctaNodes = octaNodes.length ? octaNodes : (octaData?.nodes ?? []);
   const octaNodesDisplay = rawOctaNodes.filter(n =>
-    hasNodeIds
-      ? myGPUs.some(g => g.platform_node_id === String(n.node_id))
-      : !!n.gpu_name?.trim()
+    myGPUs.some(g => g.platform_node_id && g.platform_node_id === String(n.node_id))
+  );
+  // Scraped nodes not yet linked to a registered GPU
+  const unlinkedOctaNodes = rawOctaNodes.filter(n =>
+    !myGPUs.some(g => g.platform_node_id && g.platform_node_id === String(n.node_id))
   );
 
   // Earnings: sum actual 24h income from scraped OctaSpace nodes + Clore wallet balance
   const octaIncome24h = octaNodes.reduce((s, n) => s + (n.income_24h_usd ?? 0), 0);
   const total24hIncome = parseFloat(((cloreData?.total_earnings_usd ?? 0) + octaIncome24h).toFixed(2));
 
-  // Projection: use live scraped rates rather than stale Supabase daemon records
+  // Projection: 16h/day (8h sleeping + 8h at work — when GPU is idle and rented out)
+  const RENT_HOURS = 16;
   const octaProjected = octaNodes
     .filter(n => n.status === 'online')
-    .reduce((s, n) => s + (n.rate_per_hour ?? 0) * 24, 0);
+    .reduce((s, n) => s + (n.rate_per_hour ?? 0) * RENT_HOURS, 0);
   const cloreProjected = cloreServers
-    .reduce((s, sv) => s + (sv.price_per_hour ?? 0) * 24, 0);
+    .reduce((s, sv) => s + (sv.price_per_hour ?? 0) * RENT_HOURS, 0);
   const projectedDaily = parseFloat((octaProjected + cloreProjected).toFixed(2));
 
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -253,14 +279,33 @@ export default function Dashboard() {
       </div>
 
       {/* ── Revenue projection chart ── */}
-      {myGPUs.length > 0 && (
+      {projectedDaily > 0 && (
         <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
-          <SectionTitle>
-            Daily Revenue Projection
-            <span className="ml-2 text-[8px] text-muted-foreground normal-case tracking-normal font-sans font-normal">
-              estimated · based on current active GPU rates
+          <div className="flex items-center gap-2">
+            <SectionTitle>
+              Daily Revenue Projection
+            </SectionTitle>
+            <span className="text-[8px] text-muted-foreground normal-case tracking-normal font-sans font-normal">
+              estimated · 16h/day
             </span>
-          </SectionTitle>
+            <div className="relative"
+              onMouseEnter={() => setShowProjectionInfo(true)}
+              onMouseLeave={() => setShowProjectionInfo(false)}
+            >
+              <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-help transition-colors" />
+              {showProjectionInfo && (
+                <div className="absolute left-0 top-5 z-50 w-72 bg-card border border-border rounded-md p-3 text-[9px] font-mono text-muted-foreground shadow-lg">
+                  <div className="text-foreground font-semibold mb-1">How we calculate this</div>
+                  <div>Rate × 16h/day — assuming your GPU is idle and available to renters for:</div>
+                  <div className="mt-1 pl-2 space-y-0.5">
+                    <div>· 8h overnight (while you sleep)</div>
+                    <div>· 8h during the workday (9-to-5)</div>
+                  </div>
+                  <div className="mt-1 text-muted-foreground/70">The remaining 8h are reserved for personal use (gaming, etc.)</div>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="mt-3 h-40">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={revenueChart}>
@@ -442,9 +487,52 @@ export default function Dashboard() {
                   </div>
                 ) : !octaLoading && !octaNodesLoading ? (
                   <div className="px-4 py-4 text-center text-[10px] font-mono text-muted-foreground border-t border-border/50">
-                    No OctaSpace nodes found.
+                    No linked OctaSpace nodes.
                   </div>
                 ) : null
+              )}
+
+              {/* ── Unlinked OctaSpace nodes ── */}
+              {octaOpen && unlinkedOctaNodes.length > 0 && !octaNodesLoading && (
+                <div className="border-t border-amber/20 bg-amber/5">
+                  <div className="px-4 py-2 flex items-center gap-2">
+                    <Link2 className="w-3 h-3 text-amber flex-shrink-0" />
+                    <span className="text-[9px] font-mono text-amber">
+                      {unlinkedOctaNodes.length} node{unlinkedOctaNodes.length !== 1 ? 's' : ''} not linked to a registered GPU — link to filter in
+                    </span>
+                  </div>
+                  {unlinkedOctaNodes.map(n => {
+                    const unlinkableGPUs = myGPUs.filter(g => !g.platform_node_id);
+                    return (
+                      <div key={n.node_id} className="px-4 py-2 border-t border-amber/10 flex items-center gap-3 flex-wrap">
+                        <span className="text-[10px] font-mono text-muted-foreground w-44 truncate" title={n.name}>{n.name}</span>
+                        <span className="text-[9px] font-mono text-muted-foreground/60">#{n.node_id}</span>
+                        <select
+                          value={linkAssignments[n.node_id] || ''}
+                          onChange={e => setLinkAssignments(prev => ({ ...prev, [n.node_id]: e.target.value }))}
+                          className="flex-1 min-w-[160px] bg-muted border border-border rounded px-2 py-1 text-[10px] font-mono text-foreground focus:outline-none focus:border-amber"
+                        >
+                          <option value="">— Select registered GPU —</option>
+                          {unlinkableGPUs.map(g => (
+                            <option key={g.base44_id ?? g.gpu_id} value={g.base44_id ?? g.gpu_id}>
+                              {g.model} · {g.gpu_id}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => linkOctaNode(n.node_id, linkAssignments[n.node_id])}
+                          disabled={!linkAssignments[n.node_id] || linkingNode === n.node_id}
+                          className="flex items-center gap-1.5 px-3 py-1 bg-amber/10 border border-amber/30 rounded text-[9px] font-mono text-amber hover:bg-amber/20 disabled:opacity-40 transition-colors"
+                        >
+                          {linkingNode === n.node_id
+                            ? <RefreshCw className="w-3 h-3 animate-spin" />
+                            : <Link2 className="w-3 h-3" />}
+                          Link
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
