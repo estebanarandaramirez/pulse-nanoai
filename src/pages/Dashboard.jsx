@@ -139,28 +139,32 @@ export default function Dashboard() {
   }, []);
 
   const loadOcta = useCallback(async (force = false) => {
+    // Restore both caches up-front so we never show stale REST fallback while scraper runs
     if (!force) {
-      const cached = readCache('octa');
-      if (cached.data && !isErrorResponse(cached.data)) {
-        setOctaData(cached.data);
-        setOctaStale(cached.stale);
-        if (!cached.stale) return;
-      }
+      const cachedOcta  = readCache('octa');
+      const cachedNodes = readCache('octanodes');
+      if (cachedOcta.data  && !isErrorResponse(cachedOcta.data))  { setOctaData(cachedOcta.data);   setOctaStale(cachedOcta.stale); }
+      if (cachedNodes.data)                                         { setOctaNodes(cachedNodes.data); }
+      if (!cachedOcta.stale && !cachedNodes.stale) return; // both fresh — nothing to do
     }
+    // Run both calls in parallel
     setOctaLoading(true);
-    try {
-      const res = await base44.functions.invoke("fetchOctaspaceEarnings", {});
-      if (res.data) {
-        setOctaData(res.data);
-        if (!isErrorResponse(res.data)) { setOctaStale(false); writeCache('octa', res.data); }
-      }
-    } catch {}
-    setOctaLoading(false);
     setOctaNodesLoading(true);
-    try {
-      const nr = await base44.functions.invoke("getOctaNodeInfo", {});
-      if (nr.data?.nodes) setOctaNodes(nr.data.nodes);
-    } catch {}
+    const [octaRes, nodesRes] = await Promise.allSettled([
+      base44.functions.invoke("fetchOctaspaceEarnings", {}),
+      base44.functions.invoke("getOctaNodeInfo", {}),
+    ]);
+    if (octaRes.status === 'fulfilled' && octaRes.value?.data) {
+      const d = octaRes.value.data;
+      setOctaData(d);
+      if (!isErrorResponse(d)) { setOctaStale(false); writeCache('octa', d); }
+    }
+    if (nodesRes.status === 'fulfilled' && nodesRes.value?.data?.nodes) {
+      const nodes = nodesRes.value.data.nodes;
+      setOctaNodes(nodes);
+      writeCache('octanodes', nodes);
+    }
+    setOctaLoading(false);
     setOctaNodesLoading(false);
   }, []);
 
@@ -193,7 +197,8 @@ export default function Dashboard() {
   const cloreServers = cloreData?.server_list ?? [];
 
   // Filter OctaSpace nodes by platform_node_id or node_id (both columns may hold the OctaSpace node ID)
-  const rawOctaNodes = octaNodes.length ? octaNodes : (octaData?.nodes ?? []);
+  // Use only scraper data (octaNodes) — never fall back to the broken REST API node list
+  const rawOctaNodes = octaNodes;
   const isLinked = (n) => myGPUs.some(g => {
     const id = String(n.node_id);
     return (g.platform_node_id && g.platform_node_id === id) || (g.node_id && g.node_id === id);
@@ -391,11 +396,15 @@ export default function Dashboard() {
               {octaOpen && (
                 octaNodesDisplay.length > 0 ? (
                   <div className="overflow-x-auto border-t border-border/50">
-                    <table className="w-full">
+                    <table className="w-full table-fixed">
+                      <colgroup>
+                        <col className="w-[26%]" /><col className="w-[20%]" /><col className="w-[10%]" />
+                        <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[17%]" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-border bg-muted/5">
-                          {["Node", "GPU", "Online", "Rental", "Rate/hr", "Income 24h"].map(h => (
-                            <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
+                          {["Node", "GPU", "Online", "Rental", "Rate/hr", "24h Income"].map(h => (
+                            <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal truncate">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -409,10 +418,10 @@ export default function Dashboard() {
                           const isSavingThis  = savingNodePrice == nodeId;
                           return (
                             <tr key={nodeId ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                              <td className="px-4 py-2.5 text-[10px] font-mono text-foreground max-w-[180px] truncate" title={s.name}>
+                              <td className="px-4 py-2.5 text-[10px] font-mono text-foreground truncate" title={s.name}>
                                 {s.name ?? `Node ${i + 1}`}
                               </td>
-                              <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
+                              <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground truncate">
                                 {s.gpu_name || '—'}
                               </td>
                               <td className="px-4 py-2.5">
@@ -579,11 +588,15 @@ export default function Dashboard() {
               {cloreOpen && (
                 cloreServers.length > 0 ? (
                   <div className="overflow-x-auto border-t border-border/50">
-                    <table className="w-full">
+                    <table className="w-full table-fixed">
+                      <colgroup>
+                        <col className="w-[26%]" /><col className="w-[20%]" /><col className="w-[10%]" />
+                        <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[17%]" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-border bg-muted/5">
-                          {["Server", "GPU", "Online", "Rental", "Rate/hr", "GPUs"].map(h => (
-                            <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
+                          {["Node", "GPU", "Online", "Rental", "Rate/hr", "24h Income"].map(h => (
+                            <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal truncate">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -592,10 +605,10 @@ export default function Dashboard() {
                           const isRented = s.rented;
                           return (
                             <tr key={s.server_id ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                              <td className="px-4 py-2.5 text-[10px] font-mono text-foreground max-w-[200px] truncate" title={s.name}>
+                              <td className="px-4 py-2.5 text-[10px] font-mono text-foreground truncate" title={s.name}>
                                 {s.name ?? `Server #${s.server_id}`}
                               </td>
-                              <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
+                              <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground truncate">
                                 {s.gpu_model ?? '—'}
                               </td>
                               <td className="px-4 py-2.5">
@@ -616,7 +629,7 @@ export default function Dashboard() {
                                 ${(s.price_per_hour ?? 0).toFixed(3)}
                               </td>
                               <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
-                                {s.gpu_count ?? 1}
+                                <span className="text-muted-foreground">—</span>
                               </td>
                             </tr>
                           );
