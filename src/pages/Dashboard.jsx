@@ -192,15 +192,14 @@ export default function Dashboard() {
   const activeGPUs = myGPUs.filter(g => g.status === 'active');
   const cloreServers = cloreData?.server_list ?? [];
 
-  // Filter OctaSpace nodes strictly by platform_node_id match
+  // Filter OctaSpace nodes by platform_node_id or node_id (both columns may hold the OctaSpace node ID)
   const rawOctaNodes = octaNodes.length ? octaNodes : (octaData?.nodes ?? []);
-  const octaNodesDisplay = rawOctaNodes.filter(n =>
-    myGPUs.some(g => g.platform_node_id && g.platform_node_id === String(n.node_id))
-  );
-  // Scraped nodes not yet linked to a registered GPU
-  const unlinkedOctaNodes = rawOctaNodes.filter(n =>
-    !myGPUs.some(g => g.platform_node_id && g.platform_node_id === String(n.node_id))
-  );
+  const isLinked = (n) => myGPUs.some(g => {
+    const id = String(n.node_id);
+    return (g.platform_node_id && g.platform_node_id === id) || (g.node_id && g.node_id === id);
+  });
+  const octaNodesDisplay = rawOctaNodes.filter(isLinked);
+  const unlinkedOctaNodes = rawOctaNodes.filter(n => !isLinked(n));
 
   // Earnings: sum actual 24h income from scraped OctaSpace nodes + Clore wallet balance
   const octaIncome24h = octaNodes.reduce((s, n) => s + (n.income_24h_usd ?? 0), 0);
