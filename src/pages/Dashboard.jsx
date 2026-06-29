@@ -10,7 +10,7 @@ import SectionTitle from "../components/shared/SectionTitle";
 
 // ─── Cache helpers (localStorage, 5-min TTL) ────────────────────────────────
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 
 function readCache(key) {
   try {
@@ -500,48 +500,6 @@ export default function Dashboard() {
                 ) : null
               )}
 
-              {/* ── Unlinked OctaSpace nodes ── */}
-              {octaOpen && unlinkedOctaNodes.length > 0 && !octaNodesLoading && (
-                <div className="border-t border-amber/20 bg-amber/5">
-                  <div className="px-4 py-2 flex items-center gap-2">
-                    <Link2 className="w-3 h-3 text-amber flex-shrink-0" />
-                    <span className="text-[9px] font-mono text-amber">
-                      {unlinkedOctaNodes.length} node{unlinkedOctaNodes.length !== 1 ? 's' : ''} not linked to a registered GPU — link to filter in
-                    </span>
-                  </div>
-                  {unlinkedOctaNodes.map(n => {
-                    const unlinkableGPUs = myGPUs.filter(g => !g.platform_node_id);
-                    return (
-                      <div key={n.node_id} className="px-4 py-2 border-t border-amber/10 flex items-center gap-3 flex-wrap">
-                        <span className="text-[10px] font-mono text-muted-foreground w-44 truncate" title={n.name}>{n.name}</span>
-                        <span className="text-[9px] font-mono text-muted-foreground/60">#{n.node_id}</span>
-                        <select
-                          value={linkAssignments[n.node_id] || ''}
-                          onChange={e => setLinkAssignments(prev => ({ ...prev, [n.node_id]: e.target.value }))}
-                          className="flex-1 min-w-[160px] bg-muted border border-border rounded px-2 py-1 text-[10px] font-mono text-foreground focus:outline-none focus:border-amber"
-                        >
-                          <option value="">— Select registered GPU —</option>
-                          {unlinkableGPUs.map(g => (
-                            <option key={g.base44_id ?? g.gpu_id} value={g.base44_id ?? g.gpu_id}>
-                              {g.model} · {g.gpu_id}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => linkOctaNode(n.node_id, linkAssignments[n.node_id])}
-                          disabled={!linkAssignments[n.node_id] || linkingNode === n.node_id}
-                          className="flex items-center gap-1.5 px-3 py-1 bg-amber/10 border border-amber/30 rounded text-[9px] font-mono text-amber hover:bg-amber/20 disabled:opacity-40 transition-colors"
-                        >
-                          {linkingNode === n.node_id
-                            ? <RefreshCw className="w-3 h-3 animate-spin" />
-                            : <Link2 className="w-3 h-3" />}
-                          Link
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </div>
 
             {/* ── Clore.ai sub-accordion ────────────────────────────────────── */}
@@ -648,6 +606,29 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* ── Market Prices ── */}
+      {(cloreData?.market_rates?.length > 0 || cloreLoading) && (
+        <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
+          <div className="flex items-center justify-between mb-3">
+            <SectionTitle>Market Prices</SectionTitle>
+            <span className="text-[9px] font-mono text-muted-foreground">Clore.ai · avg per GPU/hr · {cloreData?.market_rates?.length ?? 0} models</span>
+          </div>
+          {cloreLoading && !cloreData?.market_rates?.length ? (
+            <div className="text-[10px] font-mono text-muted-foreground">Loading market data...</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+              {(cloreData?.market_rates ?? []).slice(0, 25).map(r => (
+                <div key={r.name} className="bg-muted/20 border border-border rounded px-3 py-2 hover:border-cyan/30 transition-colors">
+                  <div className="text-[9px] font-mono text-muted-foreground truncate" title={r.name}>{r.name}</div>
+                  <div className="text-[11px] font-mono font-semibold text-cyan mt-0.5">${r.price_per_hour.toFixed(3)}<span className="text-[8px] text-muted-foreground font-normal">/hr</span></div>
+                  {r.listing_count && <div className="text-[8px] font-mono text-muted-foreground/60 mt-0.5">{r.listing_count} listing{r.listing_count !== 1 ? 's' : ''}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
     </div>
   );

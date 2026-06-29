@@ -67,7 +67,12 @@ Deno.serve(async (req) => {
       gpu_count: s.gpu_array?.length ?? s.specs?.gpus_count ?? 1,
       status: s.status ?? 'unknown',
       rented: s.rented ?? false,
-      price_per_hour: parseFloat((s.price?.usd?.on_demand_usd ?? s.price?.on_demand ?? 0).toFixed(4)),
+      // on_demand_usd = USD/day for the whole server → divide by GPU count and 24h to get per-GPU/hr
+      price_per_hour: (() => {
+        const gpuCount = s.gpu_array?.length ?? s.specs?.gpus_count ?? 1;
+        const dailyUsd = parseFloat(s.price?.usd?.on_demand_usd ?? 0);
+        return dailyUsd > 0 ? parseFloat((dailyUsd / gpuCount / 24).toFixed(4)) : 0;
+      })(),
       reliability: s.reliability ?? null,
     }));
 
@@ -81,25 +86,33 @@ Deno.serve(async (req) => {
       }, 8000);
       let mktData: any = {};
       try { mktData = await mktRes.json(); } catch { /* leave mktData empty */ }
-      let marketDebug = null;
 
-      if (!marketDebug) {
+      {
         // Response: { servers: [...], my_servers: [...], code: 0 }
         const listings: any[] = mktData.servers ?? [];
 
-        const rateMap: Record<string, number> = {};
+        // on_demand_usd = USD/day for the whole server → convert to per-GPU per-hour
+        // then average across listings of the same GPU model
+        const rateMap: Record<string, { sum: number; count: number }> = {};
         for (const item of listings) {
-          const price = parseFloat(item.price?.usd?.on_demand_usd ?? 0);
-          if (!price) continue;
-          // gpu_array has one entry per GPU card (may repeat); deduplicate per listing
+          const totalDailyUsd = parseFloat(item.price?.usd?.on_demand_usd ?? 0);
+          if (!totalDailyUsd) continue;
+          const gpuCount = (item.gpu_array?.length) || 1;
+          const pricePerGpuHour = totalDailyUsd / gpuCount / 24;
           const models: string[] = [...new Set<string>(item.gpu_array ?? [])];
           for (const model of models) {
             if (!model) continue;
-            if (!rateMap[model] || price > rateMap[model]) rateMap[model] = price;
+            if (!rateMap[model]) rateMap[model] = { sum: 0, count: 0 };
+            rateMap[model].sum += pricePerGpuHour;
+            rateMap[model].count += 1;
           }
         }
         marketRates = Object.entries(rateMap)
-          .map(([name, price_per_hour]) => ({ name, price_per_hour: parseFloat(price_per_hour.toFixed(4)) }))
+          .map(([name, { sum, count }]) => ({
+            name,
+            price_per_hour: parseFloat((sum / count).toFixed(4)),
+            listing_count: count,
+          }))
           .sort((a, b) => b.price_per_hour - a.price_per_hour);
       }
     } catch { /* market rates remain empty, frontend uses fallback */ }
