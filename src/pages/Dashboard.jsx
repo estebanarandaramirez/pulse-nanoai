@@ -689,42 +689,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* ── TEMP: Seed historical earnings ── remove after first run ── */}
-      {user?.email && (
-        <div className="flex justify-end">
-          <button
-            onClick={async () => {
-              const SEED = [
-                { date: '2026-06-25', octa_usd: 0,    clore_usd: 0, total_usd: 0    },
-                { date: '2026-06-26', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
-                { date: '2026-06-27', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
-                { date: '2026-06-28', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
-                { date: '2026-06-29', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
-                { date: '2026-06-30', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
-              ];
-              const results = [];
-              for (const row of SEED) {
-                try {
-                  const existing = await base44.entities.EarningsLog.filter({ user_email: user.email, date: row.date });
-                  if (existing?.length > 0) {
-                    await base44.entities.EarningsLog.update(existing[0].id, { octa_usd: row.octa_usd, clore_usd: row.clore_usd, total_usd: row.total_usd });
-                    results.push(`updated ${row.date}`);
-                  } else {
-                    await base44.entities.EarningsLog.create({ ...row, user_email: user.email });
-                    results.push(`created ${row.date}`);
-                  }
-                } catch (e) { results.push(`error ${row.date}: ${e.message}`); }
-              }
-              alert(results.join('\n'));
-              loadEarningsLog();
-            }}
-            className="text-[9px] font-mono text-muted-foreground/40 hover:text-muted-foreground px-2 py-1 border border-border/30 rounded transition-colors"
-          >
-            seed earnings log
-          </button>
-        </div>
-      )}
-
     </div>
   );
 }
