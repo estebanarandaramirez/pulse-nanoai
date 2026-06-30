@@ -147,7 +147,7 @@ Deno.serve(async (req) => {
   // 1. Load all registered GPUs so we know which user owns which node/server
   const { data: gpus, error: gpusErr } = await sb
     .from('gpus')
-    .select('user_email, node_id, platform_node_id, clore_server_id, active_platform');
+    .select('user_email, platform, node_id, platform_node_id');
 
   if (gpusErr) return Response.json({ error: gpusErr.message }, { status: 500 });
   if (!gpus?.length) return Response.json({ success: true, message: 'No GPUs registered', date: today });
@@ -159,6 +159,8 @@ Deno.serve(async (req) => {
   ]);
 
   // 3. Aggregate per user
+  // platform_node_id is the authoritative external ID for both OctaSpace and Clore.ai;
+  // node_id is a fallback for older records that predate platform_node_id.
   const perUser = new Map<string, { octa: number; clore: number }>();
 
   for (const gpu of gpus) {
@@ -167,15 +169,13 @@ Deno.serve(async (req) => {
     if (!perUser.has(email)) perUser.set(email, { octa: 0, clore: 0 });
     const u = perUser.get(email)!;
 
-    // OctaSpace attribution: check both node_id and platform_node_id columns
-    const octaId = gpu.platform_node_id ?? gpu.node_id;
-    if (octaId && octaIncome.has(String(octaId))) {
-      u.octa += octaIncome.get(String(octaId))!;
-    }
+    const extId = gpu.platform_node_id ?? gpu.node_id;
+    if (!extId) continue;
 
-    // Clore.ai attribution: match by clore_server_id
-    if (gpu.clore_server_id && cloreIncome.has(Number(gpu.clore_server_id))) {
-      u.clore += cloreIncome.get(Number(gpu.clore_server_id))!;
+    if (gpu.platform === 'OctaSpace' && octaIncome.has(String(extId))) {
+      u.octa += octaIncome.get(String(extId))!;
+    } else if (gpu.platform === 'Clore.ai' && cloreIncome.has(Number(extId))) {
+      u.clore += cloreIncome.get(Number(extId))!;
     }
   }
 
