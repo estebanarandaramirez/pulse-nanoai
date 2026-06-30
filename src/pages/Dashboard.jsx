@@ -704,6 +704,24 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* ── TEMP: Seed historical earnings ── remove after first run ── */}
+      {user?.email && (
+        <div className="flex justify-end">
+          <button
+            onClick={async () => {
+              try {
+                const res = await base44.functions.invoke('seedEarningsLog', {});
+                alert(JSON.stringify(res.data?.results, null, 2));
+                loadEarningsLog();
+              } catch (e) { alert('Seed failed: ' + e.message); }
+            }}
+            className="text-[9px] font-mono text-muted-foreground/40 hover:text-muted-foreground px-2 py-1 border border-border/30 rounded transition-colors"
+          >
+            seed earnings log
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }
