@@ -325,13 +325,13 @@ export default function Dashboard() {
             sub={projectedDaily > 0 ? "OctaSpace online + Clore.ai · est." : "No online nodes"}
             color="primary" icon={TrendingUp}
           />
-          <div className="absolute top-3 right-8 z-20"
+          <div className="absolute bottom-3 right-3 z-20"
             onMouseEnter={() => setShowProjectionInfo(true)}
             onMouseLeave={() => setShowProjectionInfo(false)}
           >
             <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-help transition-colors" />
             {showProjectionInfo && (
-              <div className="absolute right-0 top-5 z-50 w-72 bg-card border border-border rounded-md p-3 text-[9px] font-mono text-muted-foreground shadow-lg">
+              <div className="absolute right-0 bottom-5 z-50 w-72 bg-card border border-border rounded-md p-3 text-[9px] font-mono text-muted-foreground shadow-lg">
                 <div className="text-foreground font-semibold mb-1">How we calculate this</div>
                 <div>Rate × 16h/day — assuming your GPU is idle and available to renters for:</div>
                 <div className="mt-1 pl-2 space-y-0.5">
@@ -709,11 +709,29 @@ export default function Dashboard() {
         <div className="flex justify-end">
           <button
             onClick={async () => {
-              try {
-                const res = await base44.functions.invoke('seedEarningsLog', {});
-                alert(JSON.stringify(res.data?.results, null, 2));
-                loadEarningsLog();
-              } catch (e) { alert('Seed failed: ' + e.message); }
+              const SEED = [
+                { date: '2026-06-25', octa_usd: 0,    clore_usd: 0, total_usd: 0    },
+                { date: '2026-06-26', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
+                { date: '2026-06-27', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
+                { date: '2026-06-28', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
+                { date: '2026-06-29', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
+                { date: '2026-06-30', octa_usd: 0.95, clore_usd: 0, total_usd: 0.95 },
+              ];
+              const results = [];
+              for (const row of SEED) {
+                try {
+                  const existing = await base44.entities.EarningsLog.filter({ user_email: user.email, date: row.date });
+                  if (existing?.length > 0) {
+                    await base44.entities.EarningsLog.update(existing[0].id, { octa_usd: row.octa_usd, clore_usd: row.clore_usd, total_usd: row.total_usd });
+                    results.push(`updated ${row.date}`);
+                  } else {
+                    await base44.entities.EarningsLog.create({ ...row, user_email: user.email });
+                    results.push(`created ${row.date}`);
+                  }
+                } catch (e) { results.push(`error ${row.date}: ${e.message}`); }
+              }
+              alert(results.join('\n'));
+              loadEarningsLog();
             }}
             className="text-[9px] font-mono text-muted-foreground/40 hover:text-muted-foreground px-2 py-1 border border-border/30 rounded transition-colors"
           >
