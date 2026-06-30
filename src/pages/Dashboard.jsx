@@ -176,36 +176,21 @@ export default function Dashboard() {
   }, []);
 
   const loadEarningsLog = useCallback(async () => {
-    if (!user?.email) return;
     try {
-      const logs = await base44.entities.EarningsLog.filter({ user_email: user.email });
-      const sorted = (logs ?? []).sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
-      setEarningsLog(sorted);
+      const res = await base44.functions.invoke('getEarningsLog', { days: 14 });
+      if (res.data?.logs) setEarningsLog(res.data.logs);
     } catch {}
-  }, [user?.email]);
+  }, []);
 
-  // Write today's snapshot when we have fresh data from both platforms
+  // After fresh data from both platforms, snapshot today via the cron-compatible function
   useEffect(() => {
     if (!cloreFresh && !octaFresh) return;
     if (hasLoggedTodayRef.current) return;
     if (!user?.email) return;
     hasLoggedTodayRef.current = true;
-    const today = new Date().toISOString().slice(0, 10);
-    const write = async () => {
-      try {
-        const octaUsd  = parseFloat(octaNodes.reduce((s, n) => s + (n.income_24h_usd ?? 0), 0).toFixed(2));
-        const cloreUsd = parseFloat((cloreData?.total_earnings_usd ?? 0).toFixed(2));
-        const totalUsd = parseFloat((octaUsd + cloreUsd).toFixed(2));
-        const existing = await base44.entities.EarningsLog.filter({ user_email: user.email, date: today });
-        if (existing?.length > 0) {
-          await base44.entities.EarningsLog.update(existing[0].id, { octa_usd: octaUsd, clore_usd: cloreUsd, total_usd: totalUsd });
-        } else {
-          await base44.entities.EarningsLog.create({ date: today, user_email: user.email, octa_usd: octaUsd, clore_usd: cloreUsd, total_usd: totalUsd });
-        }
-        loadEarningsLog();
-      } catch (e) { console.error('EarningsLog write failed:', e.message); }
-    };
-    write();
+    base44.functions.invoke('snapshotDailyEarnings', {})
+      .then(() => loadEarningsLog())
+      .catch(e => console.error('EarningsLog snapshot failed:', e.message));
   }, [cloreFresh, octaFresh, user?.email]);
 
   useEffect(() => {
@@ -379,7 +364,7 @@ export default function Dashboard() {
                 <XAxis dataKey="day" tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 9, fill: "hsl(240 15% 55%)" }} axisLine={false} tickLine={false} width={45} />
                 <Tooltip content={<CTooltip />} />
-                <Area type="monotone" dataKey="revenue" name="Projected $" stroke="#00e5ff" fill="url(#cyanGrad)" strokeWidth={2} />
+                <Area type="monotone" dataKey="revenue" name={hasActualData ? "Earned $" : "Projected $"} stroke="#00e5ff" fill="url(#cyanGrad)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
