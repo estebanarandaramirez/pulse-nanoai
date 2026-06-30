@@ -1,0 +1,47 @@
+{
+  "name": "EarningsLog",
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": "string",
+      "description": "YYYY-MM-DD — one record per calendar day per user"
+    },
+    "user_email": {
+      "type": "string"
+    },
+    "octa_usd": {
+      "type": "number",
+      "description": "OctaSpace 24h income in USD scraped that day"
+    },
+    "clore_usd": {
+      "type": "number",
+      "description": "Clore.ai balance snapshot (cumulative) in USD that day"
+    },
+    "total_usd": {
+      "type": "number",
+      "description": "octa_usd + clore_usd"
+    }
+  },
+  "required": ["date", "user_email"],
+  "rls": {
+    "create": { "data.user_email": "{{user.email}}" },
+    "read": {
+      "$or": [
+        { "data.user_email": "{{user.email}}" },
+        { "user_condition": { "role": "admin" } }
+      ]
+    },
+    "update": {
+      "$or": [
+        { "data.user_email": "{{user.email}}" },
+        { "user_condition": { "role": "admin" } }
+      ]
+    },
+    "delete": {
+      "$or": [
+        { "data.user_email": "{{user.email}}" },
+        { "user_condition": { "role": "admin" } }
+      ]
+    }
+  }
+}

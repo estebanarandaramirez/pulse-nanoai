@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
   Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, ChevronDown, X, Pencil, Check, Info, Link2
@@ -74,6 +74,12 @@ export default function Dashboard() {
   const [linkingNode, setLinkingNode]         = useState(null);
   const [showProjectionInfo, setShowProjectionInfo] = useState(false);
 
+  // ── Earnings log (actual daily revenue chart) ────────────────────────────────
+  const [earningsLog, setEarningsLog] = useState([]);
+  const [cloreFresh, setCloreFresh]   = useState(false);
+  const [octaFresh, setOctaFresh]     = useState(false);
+  const hasLoggedTodayRef             = useRef(false);
+
   const linkOctaNode = async (nodeId, gpuBase44Id) => {
     if (!gpuBase44Id) return;
     setLinkingNode(nodeId);
@@ -131,7 +137,7 @@ export default function Dashboard() {
       const res = await base44.functions.invoke("fetchCloreaiEarnings", {});
       if (res.data) {
         setCloreData(res.data);
-        if (!isErrorResponse(res.data)) { setCloreStale(false); writeCache('clore', res.data); }
+        if (!isErrorResponse(res.data)) { setCloreStale(false); writeCache('clore', res.data); setCloreFresh(true); }
       }
     } catch {}
     clearTimeout(stopSpinner);
@@ -163,15 +169,50 @@ export default function Dashboard() {
       const nodes = nodesRes.value.data.nodes;
       setOctaNodes(nodes);
       writeCache('octanodes', nodes);
+      setOctaFresh(true);
     }
     setOctaLoading(false);
     setOctaNodesLoading(false);
   }, []);
 
+  const loadEarningsLog = useCallback(async () => {
+    if (!user?.email) return;
+    try {
+      const logs = await base44.entities.EarningsLog.filter({ user_email: user.email });
+      const sorted = (logs ?? []).sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
+      setEarningsLog(sorted);
+    } catch {}
+  }, [user?.email]);
+
+  // Write today's snapshot when we have fresh data from both platforms
+  useEffect(() => {
+    if (!cloreFresh && !octaFresh) return;
+    if (hasLoggedTodayRef.current) return;
+    if (!user?.email) return;
+    hasLoggedTodayRef.current = true;
+    const today = new Date().toISOString().slice(0, 10);
+    const write = async () => {
+      try {
+        const octaUsd  = parseFloat(octaNodes.reduce((s, n) => s + (n.income_24h_usd ?? 0), 0).toFixed(2));
+        const cloreUsd = parseFloat((cloreData?.total_earnings_usd ?? 0).toFixed(2));
+        const totalUsd = parseFloat((octaUsd + cloreUsd).toFixed(2));
+        const existing = await base44.entities.EarningsLog.filter({ user_email: user.email, date: today });
+        if (existing?.length > 0) {
+          await base44.entities.EarningsLog.update(existing[0].id, { octa_usd: octaUsd, clore_usd: cloreUsd, total_usd: totalUsd });
+        } else {
+          await base44.entities.EarningsLog.create({ date: today, user_email: user.email, octa_usd: octaUsd, clore_usd: cloreUsd, total_usd: totalUsd });
+        }
+        loadEarningsLog();
+      } catch (e) { console.error('EarningsLog write failed:', e.message); }
+    };
+    write();
+  }, [cloreFresh, octaFresh, user?.email]);
+
   useEffect(() => {
     base44.functions.invoke("solanaToken", {}).then(r => { if (r.data) setPlsData(r.data); }).catch(() => {});
     loadClore();
     loadOcta();
+    loadEarningsLog();
     if (user?.email) {
       (async () => {
         try {
@@ -189,7 +230,7 @@ export default function Dashboard() {
     } else {
       setGpusLoading(false);
     }
-  }, [user?.email, loadClore, loadOcta]);
+  }, [user?.email, loadClore, loadOcta, loadEarningsLog]);
 
   // ── Derived values ───────────────────────────────────────────────────────────
   const plsM = ((plsData?.supply?.uiAmount || 18400000) / 1e6).toFixed(1);
@@ -219,8 +260,23 @@ export default function Dashboard() {
     .reduce((s, sv) => s + (sv.price_per_hour ?? 0) * RENT_HOURS, 0);
   const projectedDaily = parseFloat((octaProjected + cloreProjected).toFixed(2));
 
+  // Build last-7-days chart: use actual EarningsLog where available, null elsewhere
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6 + i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const log = earningsLog.find(l => l.date === dateStr);
+    return {
+      day: d.toLocaleDateString('en-US', { weekday: 'short' }),
+      revenue: log ? parseFloat((log.total_usd ?? 0).toFixed(2)) : null,
+    };
+  });
+  const hasActualData = last7.some(d => d.revenue !== null);
+  // Fall back to flat projection line until we have real data
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const revenueChart = DAYS.map(day => ({ day, revenue: parseFloat(projectedDaily.toFixed(2)) }));
+  const revenueChart = hasActualData
+    ? last7
+    : DAYS.map(day => ({ day, revenue: parseFloat(projectedDaily.toFixed(2)) }));
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -306,8 +362,10 @@ export default function Dashboard() {
       {projectedDaily > 0 && (
         <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
           <div className="flex items-center gap-2">
-            <SectionTitle>Daily Revenue Projection</SectionTitle>
-            <span className="text-[8px] text-muted-foreground normal-case tracking-normal font-sans font-normal">estimated · 16h/day</span>
+            <SectionTitle>{hasActualData ? "Daily Revenue" : "Daily Revenue Projection"}</SectionTitle>
+            <span className="text-[8px] text-muted-foreground normal-case tracking-normal font-sans font-normal">
+              {hasActualData ? "last 7 days · actual" : "estimated · 16h/day"}
+            </span>
           </div>
           <div className="mt-3 h-40">
             <ResponsiveContainer width="100%" height="100%">
