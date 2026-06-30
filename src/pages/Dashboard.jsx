@@ -359,7 +359,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Revenue projection chart ── */}
-      {projectedDaily > 0 && (
+      {(projectedDaily > 0 || hasActualData) && (
         <div className="bg-card border border-border rounded-md p-4 relative card-gradient-top">
           <div className="flex items-center gap-2">
             <SectionTitle>{hasActualData ? "Daily Revenue" : "Daily Revenue Projection"}</SectionTitle>
