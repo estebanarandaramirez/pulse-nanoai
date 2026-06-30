@@ -10,7 +10,7 @@ import SectionTitle from "../components/shared/SectionTitle";
 
 // ─── Cache helpers (localStorage, 5-min TTL) ────────────────────────────────
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 
 function readCache(key) {
   try {
