@@ -75,7 +75,8 @@ export default function Dashboard() {
   const [showProjectionInfo, setShowProjectionInfo] = useState(false);
 
   // ── Earnings log (actual daily revenue chart) ────────────────────────────────
-  const [earningsLog, setEarningsLog] = useState([]);
+  const [earningsLog, setEarningsLog]       = useState([]);
+  const [allTimeEarnings, setAllTimeEarnings] = useState(null);
   const [cloreFresh, setCloreFresh]   = useState(false);
   const [octaFresh, setOctaFresh]     = useState(false);
   const hasLoggedTodayRef             = useRef(false);
@@ -179,6 +180,7 @@ export default function Dashboard() {
     try {
       const res = await base44.functions.invoke('getEarningsLog', { days: 14 });
       if (res.data?.logs) setEarningsLog(res.data.logs);
+      if (res.data?.all_time_total != null) setAllTimeEarnings(res.data.all_time_total);
     } catch {}
   }, []);
 
@@ -330,8 +332,8 @@ export default function Dashboard() {
         </div>
         <StatCard
           label="Earnings · All Platforms"
-          value={`$${total24hIncome.toFixed(2)}`}
-          sub="Clore.ai + OctaSpace 24h"
+          value={allTimeEarnings != null ? `$${allTimeEarnings.toFixed(2)}` : `$${total24hIncome.toFixed(2)}`}
+          sub={allTimeEarnings != null ? "all platforms · all time" : "Clore.ai + OctaSpace 24h"}
           color="accent" icon={Coins}
         />
         <StatCard
