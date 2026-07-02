@@ -349,15 +349,15 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d | bash"
     Write-Log "Clore fleet onboarding service started" "OK"
 
-    Write-Log "Waiting for Clore.ai services to start (up to 3 min)..."
-    for ($i = 1; $i -le 18; $i++) {
-        $svcOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>/dev/null && systemctl is-active clore-onboarding 2>/dev/null && echo both_ok" 2>&1 | Out-String) -match "both_ok"
-        if ($svcOk) { Write-Log "Clore.ai services running" "OK"; break }
+    Write-Log "Waiting for clore-hosting to start (up to 2 min)..."
+    for ($i = 1; $i -le 12; $i++) {
+        $svcOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>/dev/null && echo ok" 2>&1 | Out-String) -match "ok"
+        if ($svcOk) { Write-Log "clore-hosting running" "OK"; break }
         if ($i % 3 -eq 0) {
-            $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1; systemctl is-active clore-onboarding 2>&1" 2>&1
-            Write-Log "  Service status: $($stat -join ' / ')"
+            $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1" 2>&1
+            Write-Log "  Service status: $stat"
         }
-        Write-Log "  Waiting for services... ($($i * 10)s)"
+        Write-Log "  Waiting for clore-hosting... ($($i * 10)s)"
         Start-Sleep 10
     }
 
