@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
   Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, ChevronDown, X, Pencil, Check, Info, Link2
@@ -77,9 +77,6 @@ export default function Dashboard() {
   // ── Earnings log (actual daily revenue chart) ────────────────────────────────
   const [earningsLog, setEarningsLog]       = useState([]);
   const [allTimeEarnings, setAllTimeEarnings] = useState(null);
-  const [cloreFresh, setCloreFresh]   = useState(false);
-  const [octaFresh, setOctaFresh]     = useState(false);
-  const hasLoggedTodayRef             = useRef(false);
 
   const linkOctaNode = async (nodeId, gpuBase44Id) => {
     if (!gpuBase44Id) return;
@@ -138,7 +135,7 @@ export default function Dashboard() {
       const res = await base44.functions.invoke("fetchCloreaiEarnings", {});
       if (res.data) {
         setCloreData(res.data);
-        if (!isErrorResponse(res.data)) { setCloreStale(false); writeCache('clore', res.data); setCloreFresh(true); }
+        if (!isErrorResponse(res.data)) { setCloreStale(false); writeCache('clore', res.data); }
       }
     } catch {}
     clearTimeout(stopSpinner);
@@ -170,7 +167,6 @@ export default function Dashboard() {
       const nodes = nodesRes.value.data.nodes;
       setOctaNodes(nodes);
       writeCache('octanodes', nodes);
-      setOctaFresh(true);
     }
     setOctaLoading(false);
     setOctaNodesLoading(false);
@@ -184,16 +180,6 @@ export default function Dashboard() {
     } catch {}
   }, []);
 
-  // After fresh data from both platforms, snapshot today via the cron-compatible function
-  useEffect(() => {
-    if (!cloreFresh && !octaFresh) return;
-    if (hasLoggedTodayRef.current) return;
-    if (!user?.email) return;
-    hasLoggedTodayRef.current = true;
-    base44.functions.invoke('snapshotDailyEarnings', {})
-      .then(() => loadEarningsLog())
-      .catch(e => console.error('EarningsLog snapshot failed:', e.message));
-  }, [cloreFresh, octaFresh, user?.email]);
 
   useEffect(() => {
     base44.functions.invoke("solanaToken", {}).then(r => { if (r.data) setPlsData(r.data); }).catch(() => {});
