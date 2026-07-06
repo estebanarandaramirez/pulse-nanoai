@@ -35,7 +35,8 @@ Deno.serve(async (req) => {
   const solAddress = keypair.publicKey.toBase58();
 
   const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-  const balance = await connection.getBalance(keypair.publicKey);
+  let balance = 0;
+  try { balance = await connection.getBalance(keypair.publicKey); } catch {}
 
   const PULSE_MINT_ADDR = '2ZkHDUequTHPWQtmJj2AjBAuE1TjuZoWKewnn2Hb6H9p';
   let pulse_balance = 0;
