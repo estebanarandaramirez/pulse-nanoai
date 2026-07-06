@@ -15,10 +15,11 @@ Deno.serve(async (req) => {
   const treasuryKey = Deno.env.get('TREASURY_PRIVATE_KEY');
   if (!treasuryKey) return Response.json({ error: 'TREASURY_PRIVATE_KEY not set' }, { status: 500 });
 
-  let secretBytes;
+  let keypair: InstanceType<typeof Keypair>;
   let detectedFormat = 'unknown';
   const trimmed = treasuryKey.trim();
   try {
+    let secretBytes: Uint8Array;
     if (trimmed.startsWith('[')) {
       secretBytes = Uint8Array.from(JSON.parse(trimmed));
       detectedFormat = 'json_array';
@@ -26,11 +27,11 @@ Deno.serve(async (req) => {
       secretBytes = bs58.decode(trimmed);
       detectedFormat = 'base58';
     }
-  } catch (e) {
-    return Response.json({ error: `Failed to parse key: ${e.message}` }, { status: 500 });
+    keypair = Keypair.fromSecretKey(secretBytes);
+  } catch (e: any) {
+    return Response.json({ error: `Failed to parse TREASURY_PRIVATE_KEY: ${e.message}` }, { status: 500 });
   }
 
-  const keypair = Keypair.fromSecretKey(secretBytes);
   const solAddress = keypair.publicKey.toBase58();
 
   const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
