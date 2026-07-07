@@ -41,65 +41,11 @@
     },
     "user_email": {
       "type": "string"
-    },
-    "platform": {
-      "type": "string",
-      "enum": ["Clore.ai", "OctaSpace", "RunPod", "Vast.ai", "Salad"]
-    },
-    "platform_node_id": {
-      "type": "string"
-    },
-    "active_platform": {
-      "type": "string"
-    },
-    "node_id": {
-      "type": "string"
     }
   },
   "required": [
     "gpu_id",
     "model",
     "status"
-  ],
-  "rls": {
-    "create": {
-      "data.user_email": "{{user.email}}"
-    },
-    "read": {
-      "$or": [
-        {
-          "data.user_email": "{{user.email}}"
-        },
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        }
-      ]
-    },
-    "update": {
-      "$or": [
-        {
-          "data.user_email": "{{user.email}}"
-        },
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        }
-      ]
-    },
-    "delete": {
-      "$or": [
-        {
-          "data.user_email": "{{user.email}}"
-        },
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        }
-      ]
-    }
-  }
+  ]
 }

@@ -4,7 +4,7 @@
   "properties": {
     "date": {
       "type": "string",
-      "description": "YYYY-MM-DD — one record per calendar day per user"
+      "description": "YYYY-MM-DD \u2014 one record per calendar day per user"
     },
     "user_email": {
       "type": "string"
@@ -22,25 +22,48 @@
       "description": "octa_usd + clore_usd"
     }
   },
-  "required": ["date", "user_email"],
+  "required": [
+    "date",
+    "user_email"
+  ],
   "rls": {
-    "create": { "data.user_email": "{{user.email}}" },
+    "create": {
+      "data.user_email": "{{user.email}}"
+    },
     "read": {
       "$or": [
-        { "data.user_email": "{{user.email}}" },
-        { "user_condition": { "role": "admin" } }
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
       ]
     },
     "update": {
       "$or": [
-        { "data.user_email": "{{user.email}}" },
-        { "user_condition": { "role": "admin" } }
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
       ]
     },
     "delete": {
       "$or": [
-        { "data.user_email": "{{user.email}}" },
-        { "user_condition": { "role": "admin" } }
+        {
+          "data.user_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
       ]
     }
   }

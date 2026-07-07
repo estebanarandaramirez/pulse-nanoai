@@ -10,11 +10,22 @@
     },
     "platform": {
       "type": "string",
-      "enum": ["Salad", "Vast.ai", "RunPod", "Clore.ai", "OctaSpace"]
+      "enum": [
+        "Salad",
+        "Vast.ai",
+        "RunPod",
+        "Clore.ai",
+        "OctaSpace"
+      ]
     },
     "status": {
       "type": "string",
-      "enum": ["filling", "active", "full", "maintenance"]
+      "enum": [
+        "filling",
+        "active",
+        "full",
+        "maintenance"
+      ]
     },
     "gpu_count": {
       "type": "number"
@@ -33,5 +44,10 @@
       "format": "date-time"
     }
   },
-  "required": ["node_id", "name", "platform", "status"]
+  "required": [
+    "node_id",
+    "name",
+    "platform",
+    "status"
+  ]
 }

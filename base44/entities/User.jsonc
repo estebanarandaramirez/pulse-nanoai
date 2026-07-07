@@ -13,5 +13,9 @@
       "type": "string",
       "description": "User's Phantom wallet public key on Solana devnet"
     }
-  }
+  },
+  "required": [
+    "role",
+    "solana_wallet"
+  ]
 }
