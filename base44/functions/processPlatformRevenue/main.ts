@@ -96,32 +96,28 @@ Deno.serve(async (req) => {
   const connection = new Connection(RPC_URL, 'confirmed');
 
   // ── 5. Verify treasury PULSE balance ─────────────────────────────────────
-  let treasuryAta: PublicKey;
+  // Token account verified on-chain: 6Kwsa4upYKvvPCQvZH2LxQu5oZaCu3hShJrcTqpuA6B
+  const TREASURY_ATA = '6Kwsa4upYKvvPCQvZH2LxQu5oZaCu3hShJrcTqpuA6B';
+  const treasuryAta = new PublicKey(TREASURY_ATA);
   let treasuryBalance = 0n;
   try {
-    const rpcRes = await fetch(RPC_URL, {
+    const rpcRes = await fetch('https://api.mainnet-beta.solana.com', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1,
-        method: 'getTokenAccountsByOwner',
-        params: [
-          treasury.publicKey.toBase58(),
-          { mint: PULSE_MINT.toBase58() },
-          { encoding: 'jsonParsed' },
-        ],
+        method: 'getTokenAccountBalance',
+        params: [TREASURY_ATA],
       }),
     });
     const rpcData = await rpcRes.json();
-    const accounts = rpcData?.result?.value ?? [];
-    if (!accounts.length) throw new Error('no PULSE token account found for treasury');
-    treasuryAta = new PublicKey(accounts[0].pubkey);
-    treasuryBalance = BigInt(accounts[0].account.data.parsed.info.tokenAmount.amount);
+    const amount = rpcData?.result?.value?.amount;
+    if (!amount) throw new Error(`RPC returned no balance. Raw: ${JSON.stringify(rpcData).slice(0, 300)}`);
+    treasuryBalance = BigInt(amount);
   } catch (e: any) {
     return Response.json({
-      error: 'Treasury PULSE lookup failed',
+      error: 'Treasury PULSE balance check failed',
       detail: e?.message ?? String(e),
-      treasury: treasury.publicKey.toBase58(),
     }, { status: 400 });
   }
 
