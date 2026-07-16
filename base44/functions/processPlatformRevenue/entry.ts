@@ -99,15 +99,29 @@ Deno.serve(async (req) => {
   let treasuryAta: PublicKey;
   let treasuryBalance = 0n;
   try {
-    const res = await connection.getParsedTokenAccountsByOwner(
-      treasury.publicKey, { mint: PULSE_MINT }
-    );
-    if (!res.value.length) throw new Error('no PULSE token account');
-    treasuryAta = res.value[0].pubkey;
-    treasuryBalance = BigInt(res.value[0].account.data.parsed.info.tokenAmount.amount);
-  } catch {
+    const rpcRes = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method: 'getTokenAccountsByOwner',
+        params: [
+          treasury.publicKey.toBase58(),
+          { mint: PULSE_MINT.toBase58() },
+          { encoding: 'jsonParsed' },
+        ],
+      }),
+    });
+    const rpcData = await rpcRes.json();
+    const accounts = rpcData?.result?.value ?? [];
+    if (!accounts.length) throw new Error('no PULSE token account found for treasury');
+    treasuryAta = new PublicKey(accounts[0].pubkey);
+    treasuryBalance = BigInt(accounts[0].account.data.parsed.info.tokenAmount.amount);
+  } catch (e: any) {
     return Response.json({
-      error: 'Treasury has no PULSE token account. Send PULSE tokens to the treasury wallet first.',
+      error: 'Treasury PULSE lookup failed',
+      detail: e?.message ?? String(e),
+      treasury: treasury.publicKey.toBase58(),
     }, { status: 400 });
   }
 
