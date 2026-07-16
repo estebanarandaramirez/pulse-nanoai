@@ -16,8 +16,8 @@ import {
   Connection, PublicKey, Keypair, Transaction, sendAndConfirmTransaction,
 } from 'npm:@solana/web3.js@1.98.0';
 import {
-  createTransferInstruction, getAssociatedTokenAddress,
-  getOrCreateAssociatedTokenAccount, getAccount,
+  createTransferInstruction,
+  getOrCreateAssociatedTokenAccount,
 } from 'npm:@solana/spl-token@0.4.9';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import bs58 from 'npm:bs58@6.0.0';
@@ -99,12 +99,15 @@ Deno.serve(async (req) => {
   let treasuryAta: PublicKey;
   let treasuryBalance = 0n;
   try {
-    treasuryAta = await getAssociatedTokenAddress(PULSE_MINT, treasury.publicKey);
-    const acc = await getAccount(connection, treasuryAta);
-    treasuryBalance = acc.amount;
+    const res = await connection.getParsedTokenAccountsByOwner(
+      treasury.publicKey, { mint: PULSE_MINT }
+    );
+    if (!res.value.length) throw new Error('no PULSE token account');
+    treasuryAta = res.value[0].pubkey;
+    treasuryBalance = BigInt(res.value[0].account.data.parsed.info.tokenAmount.amount);
   } catch {
     return Response.json({
-      error: 'Treasury has no PULSE token account. Run mintPulseToTreasury first to seed it for testing.',
+      error: 'Treasury has no PULSE token account. Send PULSE tokens to the treasury wallet first.',
     }, { status: 400 });
   }
 
@@ -114,7 +117,6 @@ Deno.serve(async (req) => {
       error: 'Insufficient PULSE in treasury',
       treasury_has: Number(treasuryBalance) / 10 ** PULSE_DECIMALS,
       needs: totalPulse,
-      hint: 'Run mintPulseToTreasury with a larger amount.',
     }, { status: 400 });
   }
 
