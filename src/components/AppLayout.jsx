@@ -4,7 +4,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { base44 } from "@/api/base44Client";
 import PhantomConnect from "./shared/PhantomConnect";
 import {
-  LayoutDashboard, Wallet, Cpu, User, Database, BarChart3, Activity,
+  LayoutDashboard, Cpu, User, Database, BarChart3, Activity,
   TrendingUp, Bell, RefreshCw, Clock, Calculator, ShieldAlert, Menu, X,
   ChevronDown, ChevronRight, LogOut, Zap, Coins, DollarSign, Trophy
 } from "lucide-react";
@@ -12,7 +12,7 @@ import {
 const NAV_MAIN = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
   { label: "Leaderboard", path: "/leaderboard", icon: Trophy },
-  { label: "Wallet", path: "/wallet", icon: Wallet },
+  { label: "Payouts", path: "/wallet", icon: Coins },
   { label: "Connect GPU", path: "/connect", icon: Cpu },
   { label: "Profile", path: "/profile", icon: User },
 ];
