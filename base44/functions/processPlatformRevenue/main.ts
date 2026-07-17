@@ -171,7 +171,14 @@ Deno.serve(async (req) => {
       tx.sign(treasury);
       const rawTx = tx.serialize();
       const txHash = await connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 });
-      await connection.confirmTransaction({ signature: txHash, blockhash, lastValidBlockHeight }, 'confirmed');
+      try {
+        await connection.confirmTransaction({ signature: txHash, blockhash, lastValidBlockHeight }, 'confirmed');
+      } catch {
+        // Confirmation timed out — check if it actually landed on-chain
+        const status = await connection.getSignatureStatus(txHash, { searchTransactionHistory: true });
+        const confirmed = status?.value?.confirmationStatus === 'confirmed' || status?.value?.confirmationStatus === 'finalized';
+        if (!confirmed) throw new Error(`Transaction ${txHash} not confirmed`);
+      }
 
       await base44.asServiceRole.entities.ClaimEvent.create({
         amount_pls: userPulse, tx_hash: txHash, status: 'confirmed', user_email: email,
