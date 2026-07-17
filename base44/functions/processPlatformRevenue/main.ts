@@ -13,7 +13,7 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 import {
-  Connection, PublicKey, Keypair, Transaction, sendAndConfirmTransaction,
+  Connection, PublicKey, Keypair, Transaction,
 } from 'npm:@solana/web3.js@1.98.0';
 import {
   createTransferInstruction,
@@ -163,10 +163,15 @@ Deno.serve(async (req) => {
       const recipientAta = await getOrCreateAssociatedTokenAccount(
         connection, treasury, PULSE_MINT, recipientPubkey
       );
-      const tx = new Transaction().add(
+      // Get fresh blockhash immediately before signing to avoid expiry
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      const tx = new Transaction({ recentBlockhash: blockhash, feePayer: treasury.publicKey }).add(
         createTransferInstruction(treasuryAta!, recipientAta.address, treasury.publicKey, userLamports)
       );
-      const txHash = await sendAndConfirmTransaction(connection, tx, [treasury]);
+      tx.sign(treasury);
+      const rawTx = tx.serialize();
+      const txHash = await connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 });
+      await connection.confirmTransaction({ signature: txHash, blockhash, lastValidBlockHeight }, 'confirmed');
 
       await base44.asServiceRole.entities.ClaimEvent.create({
         amount_pls: userPulse, tx_hash: txHash, status: 'confirmed', user_email: email,
