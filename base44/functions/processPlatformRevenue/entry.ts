@@ -22,7 +22,7 @@ import {
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import bs58 from 'npm:bs58@6.0.0';
 
-const RPC_URL = 'https://rpc.ankr.com/solana';
+const RPC_URL = Deno.env.get('SOLANA_RPC_URL') ?? 'https://solana-rpc.publicnode.com';
 
 const PULSE_MINT     = new PublicKey('2ZkHDUequTHPWQtmJj2AjBAuE1TjuZoWKewnn2Hb6H9p');
 const PULSE_DECIMALS = 6;
