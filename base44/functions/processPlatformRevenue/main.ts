@@ -22,9 +22,7 @@ import {
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import bs58 from 'npm:bs58@6.0.0';
 
-const RPC_URL = Deno.env.get('SOLANA_NETWORK') === 'testnet'
-  ? 'https://api.testnet.solana.com'
-  : 'https://api.mainnet-beta.solana.com';
+const RPC_URL = 'https://rpc.ankr.com/solana';
 
 const PULSE_MINT     = new PublicKey('2ZkHDUequTHPWQtmJj2AjBAuE1TjuZoWKewnn2Hb6H9p');
 const PULSE_DECIMALS = 6;
@@ -101,7 +99,7 @@ Deno.serve(async (req) => {
   const treasuryAta = new PublicKey(TREASURY_ATA);
   let treasuryBalance = 0n;
   try {
-    const rpcRes = await fetch('https://api.mainnet-beta.solana.com', {
+    const rpcRes = await fetch('https://rpc.ankr.com/solana', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
