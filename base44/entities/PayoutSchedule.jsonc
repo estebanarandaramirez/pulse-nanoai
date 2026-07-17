@@ -52,7 +52,6 @@
     "label",
     "frequency",
     "payout_type",
-    "pool_amount",
     "is_active"
   ],
   "rls": {
