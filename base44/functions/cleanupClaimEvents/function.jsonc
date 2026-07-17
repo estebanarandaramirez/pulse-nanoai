@@ -1,4 +1,4 @@
 {
-  "entry": "main.ts",
-  "public": false
+  "name": "cleanupClaimEvents",
+  "entry": "main.ts"
 }
