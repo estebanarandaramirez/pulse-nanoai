@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
   const treasuryAta = new PublicKey(TREASURY_ATA);
   let treasuryBalance = 0n;
   try {
-    const rpcRes = await fetch('https://rpc.ankr.com/solana', {
+    const rpcRes = await fetch(RPC_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
