@@ -14,8 +14,13 @@ Deno.serve(async (req) => {
   const all = await base44.asServiceRole.entities.ClaimEvent.list('-created_date', 500);
   if (!all?.length) return Response.json({ message: 'No ClaimEvent records found.' });
 
-  const cutoff = new Date('2026-07-01T00:00:00Z');
-  const toDelete = all.filter((r: any) => new Date(r.created_date) < cutoff);
+  // Keep only the two real confirmed on-chain payouts from 2026-07-16.
+  // Everything else is bogus (fake claimPLS or test data).
+  const REAL_TX_HASHES = new Set([
+    '39D4wu84MqyAPWEYPxQpypJpjwmDoz15VS8SuBonTudmdY6gQoPaGnbLua9rgyksNJHiUH1Z1232m9Tv1g2TuxAh',
+    'cVp1hfooSHQckryHr6vTJjh1CE6PYuLy8m7Lv88sveo3u82MmmjrttK7fxGAXqREiokD1tTHGtYWoRTRLAEkMQU',
+  ]);
+  const toDelete = all.filter((r: any) => !REAL_TX_HASHES.has(r.tx_hash));
 
   const deleted: string[] = [];
   const failed: string[] = [];
