@@ -328,23 +328,48 @@ function Invoke-Phase2 {
     $osBuild = [System.Environment]::OSVersion.Version.Build
     $mirroredNetworking = $false
     $wslConfigPath = "$env:USERPROFILE\.wslconfig"
+    # vmIdleTimeout=-1 stops Windows from tearing down the WSL2 utility VM after
+    # it looks idle. Without it, the VM (and the osn daemon running inside it) can
+    # freeze silently for hours with zero log output — no heartbeat timeout, no
+    # error, just a gap — until something touches WSL again and it reconnects.
+    # This is the same fix already applied to the Clore installer (CLORE_PS1).
     if ($osBuild -ge 22621) {
         Write-Log "Windows 11 22H2+ detected — enabling WSL2 mirrored networking..."
         $wslConfigContent = if (Test-Path $wslConfigPath) { Get-Content $wslConfigPath -Raw } else { "" }
+        $changed = $false
         if ($wslConfigContent -notmatch 'networkingMode') {
             if ($wslConfigContent -match '\[wsl2\]') {
                 $wslConfigContent = $wslConfigContent -replace '(\[wsl2\])', "`$1`nnetworkingMode=mirrored"
             } else {
                 $wslConfigContent += "`n[wsl2]`nnetworkingMode=mirrored`n"
             }
-            Set-Content -Path $wslConfigPath -Value $wslConfigContent -Encoding UTF8
+            $changed = $true
         }
+        if ($wslConfigContent -notmatch 'vmIdleTimeout') {
+            if ($wslConfigContent -match '\[wsl2\]') {
+                $wslConfigContent = $wslConfigContent -replace '(\[wsl2\])', "`$1`nvmIdleTimeout=-1"
+            } else {
+                $wslConfigContent += "`n[wsl2]`nvmIdleTimeout=-1`n"
+            }
+            $changed = $true
+        }
+        if ($changed) { Set-Content -Path $wslConfigPath -Value $wslConfigContent -Encoding UTF8 }
         $mirroredNetworking = $true
-        Write-Log "WSL2 mirrored networking configured — UDP tunnels will work correctly" "OK"
-        Set-Step "WSL2 networking" "PASS" "Mirrored (Windows 11 22H2+) — UDP tunnels fully functional"
+        Write-Log "WSL2 networking configured (mirrored, vmIdleTimeout=-1) — UDP tunnels will work correctly" "OK"
+        Set-Step "WSL2 networking" "PASS" "Mirrored (Windows 11 22H2+), vmIdleTimeout=-1 — UDP tunnels fully functional"
     } else {
         Write-Log "Windows build ${osBuild}: mirrored networking needs 22H2 (22621+) — portproxy only covers TCP; UDP tunnels will be limited" "WARN"
-        Set-Step "WSL2 networking" "WARN" "Portproxy only (build $osBuild) — UDP tunnel ports limited; upgrade to Win 11 22H2+ recommended"
+        $wslConfigContent = if (Test-Path $wslConfigPath) { Get-Content $wslConfigPath -Raw } else { "" }
+        if ($wslConfigContent -notmatch 'vmIdleTimeout') {
+            if ($wslConfigContent -match '\[wsl2\]') {
+                $wslConfigContent = $wslConfigContent -replace '(\[wsl2\])', "`$1`nvmIdleTimeout=-1"
+            } else {
+                $wslConfigContent += "`n[wsl2]`nvmIdleTimeout=-1`n"
+            }
+            Set-Content -Path $wslConfigPath -Value $wslConfigContent -Encoding UTF8
+        }
+        Write-Log "vmIdleTimeout=-1 set (prevents silent WSL2 VM idle-freeze)" "OK"
+        Set-Step "WSL2 networking" "WARN" "Portproxy only (build $osBuild), vmIdleTimeout=-1 — UDP tunnel ports limited; upgrade to Win 11 22H2+ recommended"
     }
 
     wsl --shutdown
@@ -432,15 +457,18 @@ function Invoke-Phase2 {
     Write-Log "HugePages capped — NVIDIA driver limited to 512MB kernel pages" "OK"
     Set-Step "HugePages cap (RAM fix)" "PASS"
 
-    # ── Stability Fix 2: raise OSN disk alarm threshold ──────────────────────────
+    # ── Stability Fix 2: raise OSN disk + memory alarm thresholds ───────────────
     # OctaSpace's installer creates /docker-data.img (~763GB real file) for Docker storage,
     # pushing the root filesystem to ~81%. Erlang's disksup fires a disk_almost_full alarm
     # at 80% (the default) and causes OSN to self-terminate. Raising to 90% clears headroom.
-    Write-Log "Raising OSN disk alarm threshold from 80% to 90%..."
+    # memsup's system_memory_high_watermark uses "strictly free / total" which fires constantly
+    # on Linux because the kernel fills all spare memory with buffer cache. Raising to 0.97
+    # means the alarm only fires when genuinely RAM-starved; brief spikes clear quickly.
+    Write-Log "Patching OSN alarm thresholds (disk 90%, memory 97%)..."
     $diskFixScript = @'
 SYS_CFG=$(ls /home/octa/osn/releases/*/sys.config 2>/dev/null | grep -v RELEASES | head -1)
 if [ -z "$SYS_CFG" ]; then echo "sys.config not found"; exit 1; fi
-grep -q "disk_almost_full_threshold" "$SYS_CFG" && echo "already patched" && exit 0
+grep -q "disk_almost_full_threshold" "$SYS_CFG" && grep -q "system_memory_high_watermark" "$SYS_CFG" && echo "already patched" && exit 0
 cat > "$SYS_CFG" << 'ERLEOF'
 [
     {kernel, [
@@ -456,16 +484,40 @@ cat > "$SYS_CFG" << 'ERLEOF'
         ]}
     ]},
     {os_mon, [
-        {disk_almost_full_threshold, 0.90}
+        {disk_almost_full_threshold, 0.90},
+        {system_memory_high_watermark, 0.97}
     ]}
 ].
 ERLEOF
 echo "patched"
 '@
+    $diskFixScript = $diskFixScript -replace "`r`n", "`n"  # CRLF breaks heredoc delimiter when decoded in bash
     $diskFixB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($diskFixScript))
     $diskResult = wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$diskFixB64' | base64 -d | bash" 2>&1
-    Write-Log "Disk alarm threshold: $($diskResult -join ' ')" "OK"
-    Set-Step "OSN disk alarm threshold" "PASS"
+    $diskOk = ($LASTEXITCODE -eq 0) -and ($diskResult -notmatch 'syntax error|not found|error')
+    Write-Log "OSN alarm thresholds: $($diskResult -join ' ')" $(if ($diskOk) { "OK" } else { "WARN" })
+    if ($diskOk) {
+        Set-Step "OSN alarm thresholds" "PASS"
+    } else {
+        Set-Step "OSN alarm thresholds" "WARN" "threshold patch failed — OSN may restart if disk >80% or memory cache fills"
+    }
+
+    # ── Stability Fix 3: disable Windows Update auto-restart ─────────────────────
+    # Windows 11 can force-restart mid-rental to apply updates, terminating any running job
+    # with "node went down or rebooted during session". Block auto-restart when a user is
+    # logged in (updates still download and install; they just don't restart without consent).
+    Write-Log "Blocking Windows Update auto-restart during active sessions..."
+    try {
+        $wuPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+        if (-not (Test-Path $wuPath)) { New-Item -Path $wuPath -Force | Out-Null }
+        Set-ItemProperty -Path $wuPath -Name "NoAutoRebootWithLoggedOnUsers" -Value 1 -Type DWord -Force
+        Set-ItemProperty -Path $wuPath -Name "AUOptions" -Value 4 -Type DWord -Force  # 4 = download and schedule install (no auto-install)
+        Write-Log "Windows Update auto-restart suppressed" "OK"
+        Set-Step "Windows Update restart guard" "PASS"
+    } catch {
+        Write-Log "Could not set Windows Update policy (non-fatal): $_" "WARN"
+        Set-Step "Windows Update restart guard" "WARN" "Manual: set NoAutoRebootWithLoggedOnUsers=1 in Group Policy"
+    }
 
     # Start the service so it can register and generate a node token
     Write-Log "Starting osn service..."
@@ -616,8 +668,24 @@ done
     $watchdog = @'
 $hi = 75; $lo = 20; $paused = $false
 $vendor = if (Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA|GeForce|RTX|GTX' } | Select-Object -First 1) { 'NVIDIA' } else { 'AMD' }
+$wdLog = "$env:LOCALAPPDATA\Pulse\octa_watchdog.log"
+$keepalivePid = $null
+
+function Ensure-WSLAlive {
+    if ($null -eq $keepalivePid -or -not (Get-Process -Id $keepalivePid -ErrorAction SilentlyContinue)) {
+        $p = Start-Process "wsl.exe" -ArgumentList "-d Ubuntu-22.04 --user root -- sleep 3600" -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+        if ($p) {
+            $script:keepalivePid = $p.Id
+            Add-Content $wdLog "$(Get-Date -f 'HH:mm') WSL keepalive started (PID $($p.Id))"
+        }
+    }
+}
+
+Ensure-WSLAlive
+
 while ($true) {
     try {
+        Ensure-WSLAlive
         $util = if ($vendor -eq 'NVIDIA') {
             [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null).Trim()
         } else {
@@ -627,11 +695,11 @@ while ($true) {
         if ($util -gt $hi -and -not $paused) {
             wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop osn 2>/dev/null"
             $paused = $true
-            Add-Content "$env:LOCALAPPDATA\Pulse\octa_watchdog.log" "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
+            Add-Content $wdLog "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
         } elseif ($util -lt $lo -and $paused) {
             wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start osn 2>/dev/null"
             $paused = $false
-            Add-Content "$env:LOCALAPPDATA\Pulse\octa_watchdog.log" "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
+            Add-Content $wdLog "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
         }
     } catch {}
     Start-Sleep 30
