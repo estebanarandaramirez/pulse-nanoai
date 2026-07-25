@@ -279,7 +279,7 @@ function Invoke-Phase2 {
     Register-Step "Build tools (curl, bash)" "wsl -d Ubuntu-22.04 -- bash -c 'apt-get update && apt-get install -y curl bash'"
     Register-Step "OctaSpace osn installed" "Check install.octa.space or OctaSpace docs"
     Register-Step "HugePages cap (RAM fix)"
-    Register-Step "OSN disk alarm threshold"
+    Register-Step "OSN alarm thresholds"
     Register-Step "osn service started"
     Register-Step "OctaSpace node token"
     Register-Step "Windows Firewall rules"
@@ -406,7 +406,7 @@ function Invoke-Phase2 {
         $ubuntuVer = wsl -d Ubuntu-22.04 --user root -- bash -c "lsb_release -cs 2>/dev/null" 2>&1
         $ubuntuVer = $ubuntuVer.Trim()
         if ($ubuntuVer -notin @("jammy","focal","noble")) { $ubuntuVer = "jammy" }
-        $rocmScript = "set -e`nexport DEBIAN_FRONTEND=noninteractive`napt-get update -qq`napt-get install -y -qq wget gnupg ca-certificates`nmkdir -p /etc/apt/keyrings`nwget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg`necho 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 $ubuntuVer main' > /etc/apt/sources.list.d/rocm.list`napt-get update -qq`napt-get install -y -qq rocm-opencl-runtime"
+        $rocmScript = "set -e`nexport DEBIAN_FRONTEND=noninteractive`napt-get update -qq`napt-get install -y -qq wget gnupg ca-certificates`nmkdir -p /etc/apt/keyrings`nrm -f /etc/apt/keyrings/rocm.gpg`nwget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg`necho 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 $ubuntuVer main' > /etc/apt/sources.list.d/rocm.list`napt-get update -qq`napt-get install -y -qq rocm-opencl-runtime"
         # Pipe via stdin to avoid CRLF issues with bash -c on Windows
         $rocmScript | wsl -d Ubuntu-22.04 --user root -- bash 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -eq 0) {
@@ -428,7 +428,9 @@ function Invoke-Phase2 {
     }
 
     Write-Log "Installing gum (required by OctaSpace installer)..."
-    $gumInstall = "export DEBIAN_FRONTEND=noninteractive && mkdir -p /etc/apt/keyrings && curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg && echo 'deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *' | tee /etc/apt/sources.list.d/charm.list > /dev/null && apt-get update -qq && apt-get install -y -qq gum"
+    # rm -f before dearmor: gpg prompts "overwrite?" if the keyring already exists (e.g. a
+    # prior interrupted run), and that prompt hangs forever with no interactive stdin reaching it.
+    $gumInstall = "export DEBIAN_FRONTEND=noninteractive && mkdir -p /etc/apt/keyrings && rm -f /etc/apt/keyrings/charm.gpg && curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg && echo 'deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *' | tee /etc/apt/sources.list.d/charm.list > /dev/null && apt-get update -qq && apt-get install -y -qq gum"
     wsl -d Ubuntu-22.04 --user root -- bash -c $gumInstall 2>&1 | ForEach-Object { Write-Log $_ }
     if ($LASTEXITCODE -ne 0) {
         Write-Log "gum install failed — OctaSpace installer may fail" "WARN"
@@ -525,32 +527,50 @@ echo "patched"
     Set-Step "osn service started" "PASS"
 
     # ── Extract OctaSpace node token from installer output ────────────────────
-    # The installer prints a box: ║  Node Token: XXXXXXXXXX  ║ to stdout.
+    # The installer prints a box: ║  Node Token: XXXXXXXXXX  ║ to stdout — but only
+    # the FIRST time a node is created; a re-run of this wrapper against an already-
+    # registered node won't reprint it. So the moment we do capture it fresh, persist
+    # it to a plain-text marker file we control, and check that file first on every
+    # future run before falling back to guessing. (The osn.ident file OctaSpace itself
+    # writes is a raw Erlang external-term-format blob, not JSON, and isn't a stable
+    # thing to scrape from bash — don't try to parse it.)
+    $tokenMarkerCmd = "cat /home/octa/.pulse_node_token 2>/dev/null"
     $octaNodeToken = ""
     $tokenMatch = $octaOutput | Select-String -Pattern 'Node Token:\s*(\S+)'
     if ($tokenMatch) {
         $octaNodeToken = $tokenMatch.Matches[0].Groups[1].Value.Trim()
+        wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$octaNodeToken' > /home/octa/.pulse_node_token" 2>&1 | Out-Null
         Write-Log "OctaSpace node token: $octaNodeToken" "OK"
         Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
     } else {
-        # Fallback: check config files written by osn after first start
-        Write-Log "Token not found in installer output — checking osn config files..."
-        Start-Sleep 15
-        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c @'
+        # Fallback 1: our own marker file, written on a prior successful run of this script
+        Write-Log "Token not found in installer output — checking for a previously saved token..."
+        $marker = (wsl -d Ubuntu-22.04 --user root -- bash -c $tokenMarkerCmd 2>&1) -join ''
+        $marker = $marker.Trim()
+        if ($marker -match '^\S{6,}$') {
+            $octaNodeToken = $marker
+            Write-Log "OctaSpace node token (from saved marker): $octaNodeToken" "OK"
+            Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
+        } else {
+            # Fallback 2: legacy guessed config paths (kept in case osn's layout changes)
+            Write-Log "No saved token marker — checking osn config files..."
+            Start-Sleep 15
+            $raw = wsl -d Ubuntu-22.04 --user root -- bash -c @'
 for f in /home/octa/osn/etc/sys.config /etc/osn/node.json /var/lib/osn/node.json; do
     [ -f "$f" ] || continue
     tok=$(grep -oP '"node_token"\s*:\s*"\K[^"]+' "$f" 2>/dev/null || grep -oP '"token"\s*:\s*"\K[^"]+' "$f" 2>/dev/null)
     [ -n "$tok" ] && echo "$tok" && break
 done
 '@ 2>&1
-        $candidate = ($raw | Where-Object { $_ -match '^\s*\S{6,}\s*$' }) | Select-Object -First 1
-        if ($candidate) {
-            $octaNodeToken = $candidate.Trim()
-            Write-Log "OctaSpace node token (from config): $octaNodeToken" "OK"
-            Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
-        } else {
-            Write-Log "Node token not found — it will appear at cube.octa.computer after the node connects" "WARN"
-            Set-Step "OctaSpace node token" "WARN" "Not yet assigned — check cube.octa.computer"
+            $candidate = ($raw | Where-Object { $_ -match '^\s*\S{6,}\s*$' }) | Select-Object -First 1
+            if ($candidate) {
+                $octaNodeToken = $candidate.Trim()
+                Write-Log "OctaSpace node token (from config): $octaNodeToken" "OK"
+                Set-Step "OctaSpace node token" "PASS" "Token: $octaNodeToken"
+            } else {
+                Write-Log "Node token not found — it will appear at cube.octa.computer after the node connects" "WARN"
+                Set-Step "OctaSpace node token" "WARN" "Not yet assigned — check cube.octa.computer"
+            }
         }
     }
 
@@ -663,45 +683,27 @@ done
         Set-Step "Pulse registration" "WARN" "Will retry automatically on next login"
     }
 
-    # ── GPU Watchdog: pause osn during gaming ─────────────────────────────────
-    Write-Log "Installing GPU gaming watchdog..."
+    # ── WSL Keepalive Watchdog ─────────────────────────────────────────────────
+    Write-Log "Installing WSL keepalive watchdog..."
     $watchdog = @'
-$hi = 75; $lo = 20; $paused = $false
-$vendor = if (Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA|GeForce|RTX|GTX' } | Select-Object -First 1) { 'NVIDIA' } else { 'AMD' }
 $wdLog = "$env:LOCALAPPDATA\Pulse\octa_watchdog.log"
 $keepalivePid = $null
 
 function Ensure-WSLAlive {
     if ($null -eq $keepalivePid -or -not (Get-Process -Id $keepalivePid -ErrorAction SilentlyContinue)) {
-        $p = Start-Process "wsl.exe" -ArgumentList "-d Ubuntu-22.04 --user root -- sleep 3600" -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+        $p = Start-Process "wsl.exe" -ArgumentList "-d Ubuntu-22.04 --user root -- bash -c 'while true; do sleep 3600; done'" -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
         if ($p) {
             $script:keepalivePid = $p.Id
-            Add-Content $wdLog "$(Get-Date -f 'HH:mm') WSL keepalive started (PID $($p.Id))"
+            Add-Content $wdLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') WSL keepalive started (PID $($p.Id))"
         }
     }
 }
 
 Ensure-WSLAlive
+Add-Content $wdLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Watchdog started"
 
 while ($true) {
-    try {
-        Ensure-WSLAlive
-        $util = if ($vendor -eq 'NVIDIA') {
-            [int](& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null).Trim()
-        } else {
-            $s = Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction SilentlyContinue
-            if ($s) { [int]($s.CounterSamples | Measure-Object -Property CookedValue -Maximum).Maximum } else { 0 }
-        }
-        if ($util -gt $hi -and -not $paused) {
-            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl stop osn 2>/dev/null"
-            $paused = $true
-            Add-Content $wdLog "$(Get-Date -f 'HH:mm') PAUSED (GPU $util%)"
-        } elseif ($util -lt $lo -and $paused) {
-            wsl -d Ubuntu-22.04 -- bash -c "sudo systemctl start osn 2>/dev/null"
-            $paused = $false
-            Add-Content $wdLog "$(Get-Date -f 'HH:mm') RESUMED (GPU $util%)"
-        }
-    } catch {}
+    try { Ensure-WSLAlive } catch {}
     Start-Sleep 30
 }
 '@
@@ -807,7 +809,7 @@ wsl -d Ubuntu-22.04 -- bash -c 'sudo systemctl start osn 2>/dev/null' 2>&1 |
         @{ L = "VRAM";         V = "${vramGb} GB" },
         @{ L = "Platform";     V = "OctaSpace (via Pulse)" },
         @{ L = "Node token";   V = if ($octaNodeToken) { $octaNodeToken } else { "Pending — check cube.octa.computer" } },
-        @{ L = "Gaming pause"; V = "Auto (GPU > 75% util)" },
+        @{ L = "WSL keepalive"; V = "Active (watchdog running)" },
         @{ L = "Auto-start";   V = "On every Windows login" },
         @{ L = "Logs";         V = $LOG_FILE }
     ) | ForEach-Object { Write-Host ("  {0,-16} {1}" -f $_.L, $_.V) -ForegroundColor White }
