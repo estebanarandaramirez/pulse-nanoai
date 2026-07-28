@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // One-shot: backfills EarningsLog for Jul 23-27 from actual OctaSpace session data.
-// Cross-day sessions split proportionally by seconds.
+// Cross-day sessions split proportionally by elapsed seconds at midnight boundary.
 // OCTA price: $0.077220825494324379 (from OctaSpace tooltip, Jul 25 2026)
 // User: esteban.arandaramirez@gmail.com (owner of node 11615)
 
