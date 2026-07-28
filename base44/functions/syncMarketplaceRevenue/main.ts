@@ -84,54 +84,82 @@ Deno.serve(async (req) => {
 
   const totalRevenue = octa24hUsd + clore24hUsd + otherUsd;
 
-  // ── Write EarningsLog for today per GPU provider ──────────────────────────
-  // Each hourly run overwrites today's record with the freshest 24h snapshot.
+  // ── Write EarningsLog for today per platform owner ────────────────────────
+  // Only writes when income > 0 — never overwrites existing records with $0.
+  // Attributes earnings only to users whose GPU.platform matches the earning platform.
   // processPlatformRevenue sums all EarningsLog rows since last_run_at for payouts.
   const today = new Date().toISOString().slice(0, 10);
   const earningsLogResults: string[] = [];
 
+  const upsertEarningsLog = async (
+    email: string, octa: number, clore: number, other: number,
+  ) => {
+    const total = parseFloat((octa + clore + other).toFixed(6));
+    try {
+      const existing = await base44.asServiceRole.entities.EarningsLog.filter({
+        date: today, user_email: email,
+      });
+      if (existing?.length > 0) {
+        await base44.asServiceRole.entities.EarningsLog.update(existing[0].id, {
+          octa_usd: parseFloat(octa.toFixed(6)),
+          clore_usd: parseFloat(clore.toFixed(6)),
+          total_usd: total,
+        });
+        earningsLogResults.push(`updated:${email}`);
+      } else {
+        await base44.asServiceRole.entities.EarningsLog.create({
+          date: today, user_email: email,
+          octa_usd: parseFloat(octa.toFixed(6)),
+          clore_usd: parseFloat(clore.toFixed(6)),
+          total_usd: total,
+        });
+        earningsLogResults.push(`created:${email}`);
+      }
+    } catch (e: any) {
+      earningsLogResults.push(`error:${email}:${e.message}`);
+    }
+  };
+
   try {
     const allGPUs = await base44.asServiceRole.entities.GPU.list();
-    const userEmails = [
-      ...new Set((allGPUs ?? []).map((g: any) => g.user_email).filter(Boolean)),
+    const gpus = allGPUs ?? [];
+
+    const emailsByPlatform = (platform: string) => [
+      ...new Set(
+        gpus
+          .filter((g: any) =>
+            (g.active_platform ?? g.platform ?? '').toLowerCase() === platform.toLowerCase()
+          )
+          .map((g: any) => g.user_email)
+          .filter(Boolean),
+      ),
     ] as string[];
 
-    if (userEmails.length > 0) {
-      const perUserOcta  = octa24hUsd  / userEmails.length;
-      const perUserClore = clore24hUsd / userEmails.length;
-      const perUserOther = otherUsd    / userEmails.length;
-      const perUserTotal = perUserOcta + perUserClore + perUserOther;
+    const octaOwners  = emailsByPlatform('OctaSpace');
+    const cloreOwners = emailsByPlatform('Clore');
 
-      for (const email of userEmails) {
-        try {
-          const existing = await base44.asServiceRole.entities.EarningsLog.filter({
-            date: today,
-            user_email: email,
-          });
+    if (octa24hUsd > 0 && octaOwners.length > 0) {
+      const perUser = octa24hUsd / octaOwners.length;
+      for (const email of octaOwners) await upsertEarningsLog(email, perUser, 0, 0);
+    } else if (octa24hUsd === 0 && octaOwners.length > 0) {
+      earningsLogResults.push(`skipped:octa:no income (owners: ${octaOwners.join(',')})`);
+    }
 
-          if (existing?.length > 0) {
-            await base44.asServiceRole.entities.EarningsLog.update(existing[0].id, {
-              octa_usd:  perUserOcta,
-              clore_usd: perUserClore,
-              total_usd: perUserTotal,
-            });
-            earningsLogResults.push(`updated:${email}`);
-          } else {
-            await base44.asServiceRole.entities.EarningsLog.create({
-              date:      today,
-              user_email: email,
-              octa_usd:  perUserOcta,
-              clore_usd: perUserClore,
-              total_usd: perUserTotal,
-            });
-            earningsLogResults.push(`created:${email}`);
-          }
-        } catch (e: any) {
-          earningsLogResults.push(`error:${email}:${e.message}`);
-        }
+    if (clore24hUsd > 0 && cloreOwners.length > 0) {
+      const perUser = clore24hUsd / cloreOwners.length;
+      for (const email of cloreOwners) await upsertEarningsLog(email, 0, perUser, 0);
+    }
+
+    if (otherUsd > 0) {
+      const allOwners = [...new Set(gpus.map((g: any) => g.user_email).filter(Boolean))] as string[];
+      if (allOwners.length > 0) {
+        const perUser = otherUsd / allOwners.length;
+        for (const email of allOwners) await upsertEarningsLog(email, 0, 0, perUser);
       }
-    } else {
-      earningsLogResults.push('no GPU records found — no users to credit');
+    }
+
+    if (earningsLogResults.length === 0) {
+      earningsLogResults.push('no income on any platform — EarningsLog not updated');
     }
   } catch (e: any) {
     earningsLogResults.push(`GPU lookup failed: ${e.message}`);
