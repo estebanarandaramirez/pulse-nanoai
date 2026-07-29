@@ -49,9 +49,9 @@ Deno.serve(async (req) => {
     return Response.json({ message: 'No active PayoutSchedule. Create one in base44 entities with is_active: true.' });
   }
   const schedule = schedules[0];
-  const sinceDate = schedule.last_run_at
-    ? new Date(schedule.last_run_at).toISOString().slice(0, 10)
-    : '2000-01-01';
+  // override_since_date lets an admin force a lookback past the stored last_run_at
+  const sinceDate = (body.override_since_date as string)
+    ?? (schedule.last_run_at ? new Date(schedule.last_run_at).toISOString().slice(0, 10) : '2000-01-01');
 
   // ── 2. Sum earnings per user since last payout ───────────────────────────
   const allLogs = await base44.asServiceRole.entities.EarningsLog.list();
