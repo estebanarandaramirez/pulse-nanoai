@@ -19,7 +19,6 @@ import {
   createTransferInstruction,
   getOrCreateAssociatedTokenAccount,
 } from 'npm:@solana/spl-token@0.4.9';
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import bs58 from 'npm:bs58@6.0.0';
 
 const RPC_URL = Deno.env.get('SOLANA_RPC_URL') ?? 'https://solana-rpc.publicnode.com';
@@ -38,11 +37,8 @@ Deno.serve(async (req) => {
   } catch {}
 
   const treasuryKey = Deno.env.get('TREASURY_PRIVATE_KEY');
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!treasuryKey) return Response.json({ error: 'TREASURY_PRIVATE_KEY not set' }, { status: 500 });
-  if (!supabaseUrl || !supabaseKey) return Response.json({ error: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set' }, { status: 500 });
 
   const body = await req.json().catch(() => ({}));
   const dry_run: boolean = !!body.dry_run;
@@ -58,19 +54,18 @@ Deno.serve(async (req) => {
     : '2000-01-01';
 
   // ── 2. Sum earnings per user since last payout ───────────────────────────
-  const sb = createClient(supabaseUrl, supabaseKey);
-  const { data: logs, error: logErr } = await sb
-    .from('earnings_log')
-    .select('user_email, total_usd')
-    .gt('date', sinceDate);
+  const allLogs = await base44.asServiceRole.entities.EarningsLog.list();
+  const logs = (allLogs ?? []).filter(
+    (l: any) => (l.date ?? '') > sinceDate && (parseFloat(l.total_usd) || 0) > 0
+  );
 
-  if (logErr) return Response.json({ error: logErr.message }, { status: 500 });
-  if (!logs?.length) {
+  if (!logs.length) {
     return Response.json({ message: `No earnings recorded since ${sinceDate}. Nothing to distribute.` });
   }
 
   const userEarnings: Record<string, number> = {};
   for (const row of logs) {
+    if (!row.user_email) continue;
     userEarnings[row.user_email] = (userEarnings[row.user_email] ?? 0) + (parseFloat(row.total_usd) || 0);
   }
 
