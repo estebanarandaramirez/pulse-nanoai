@@ -286,7 +286,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Global stats row ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {/* Daily Projection — inline so we can add the info tooltip */}
         <div className="relative">
           <StatCard
