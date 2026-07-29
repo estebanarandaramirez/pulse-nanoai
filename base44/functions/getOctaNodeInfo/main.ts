@@ -153,7 +153,6 @@ Deno.serve(async (req) => {
     }
 
     // ── For each node: scrape config page for current rate/hr ───────────────────
-    let octaPrice = 0.085;
     for (const node of nodes) {
       try {
         const configRes = await fetch(`${CUBE_BASE}/nodes/${node.node_id}?type=configuration`, {
@@ -168,28 +167,10 @@ Deno.serve(async (req) => {
           ?? configHtml.match(/value=["']([^"']+)["'][^>]+name=["']node_price\[base_usd\]["']/);
         const baseRaw = baseMatch ? parseFloat(baseMatch[1]) : 0;
 
-        // OctaSpace uses a Stimulus.js currency toggle — no checkbox, no 'checked' attribute.
-        // The active currency is stored in data-currency-toggle-initial-value="USD"|"OCTA".
-        const usdChecked = /data-currency-toggle-initial-value=["']USD["']/i.test(configHtml);
-        const currencyUsd = usdChecked ? 1 : 0;
-
-        let ratePerHour = 0;
-        if (currencyUsd === 1) {
-          ratePerHour = baseRaw / 10000;
-        } else if (baseRaw > 0) {
-          // OCTA mode: fetch price once for all nodes
-          if (octaPrice === 0.085) {
-            const priceRaw = await fetch(
-              'https://api.coingecko.com/api/v3/simple/price?ids=octaspace&vs_currencies=usd',
-              { headers: { Accept: 'application/json' } }
-            ).then(r => r.json()).catch(() => null);
-            octaPrice = priceRaw?.octaspace?.usd ?? 0.085;
-          }
-          ratePerHour = (baseRaw / 10000) * octaPrice;
-        }
-
-        node.rate_per_hour = parseFloat(ratePerHour.toFixed(4));
-        node.currency_mode = currencyUsd === 1 ? 'USD' : 'OCTA';
+        // OctaSpace removed OCTA pricing — all node prices are now USD only.
+        // base_usd integer is stored ×10000, so divide to get the hourly USD rate.
+        node.rate_per_hour = parseFloat((baseRaw / 10000).toFixed(4));
+        node.currency_mode = 'USD';
         node.base_usd_raw = baseRaw;
       } catch {
         node.rate_per_hour = 0;
