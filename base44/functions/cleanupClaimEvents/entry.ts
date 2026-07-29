@@ -2,13 +2,12 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // One-shot admin cleanup:
 // 1. Zero the 2 bogus ClaimEvent records (Jul 28 duplicates of Jul 17 payouts).
-//    Wallet.jsx filters amount_pls > 0, so zeroing hides them cleanly.
-// 2. Zero the stale Jul 28 EarningsLog record whose value double-counts Jul 27
-//    session income that was already attributed via the Jul 23-27 backfill.
+// 2. List ALL EarningsLog records for esteban and zero any outside Jul 23-27
+//    (the only verified backfill range — any other dates are stale sync artifacts).
 
 const BOGUS_CLAIM_IDS = ['6a690cb6a504d6f09d09df1a', '6a690cb6af7eb1fb695670b6'];
-const STALE_LOG_DATE  = '2026-07-28';
-const STALE_LOG_USER  = 'esteban.arandaramirez@gmail.com';
+const USER_EMAIL = 'esteban.arandaramirez@gmail.com';
+const VALID_DATES = ['2026-07-23', '2026-07-24', '2026-07-25', '2026-07-26', '2026-07-27'];
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -20,7 +19,7 @@ Deno.serve(async (req) => {
 
   const results: any[] = [];
 
-  // 1. Zero bogus ClaimEvents
+  // 1. Zero bogus ClaimEvents (idempotent)
   for (const id of BOGUS_CLAIM_IDS) {
     try {
       await base44.asServiceRole.entities.ClaimEvent.update(id, { amount_pls: 0 });
@@ -30,25 +29,37 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 2. Zero the stale Jul 28 EarningsLog record
+  // 2. Fetch ALL EarningsLog records for esteban, zero anything outside Jul 23-27
   try {
-    const existing = await base44.asServiceRole.entities.EarningsLog.filter({
-      date: STALE_LOG_DATE,
-      user_email: STALE_LOG_USER,
+    const all = await base44.asServiceRole.entities.EarningsLog.filter({
+      user_email: USER_EMAIL,
     });
-    for (const rec of existing ?? []) {
-      await base44.asServiceRole.entities.EarningsLog.update(rec.id, {
-        octa_usd: 0,
-        clore_usd: 0,
-        total_usd: 0,
+
+    for (const rec of all ?? []) {
+      const isValid = VALID_DATES.includes(rec.date ?? '');
+      results.push({
+        type: 'EarningsLog',
+        date: rec.date,
+        id: rec.id,
+        total_usd: rec.total_usd,
+        action: isValid ? 'kept' : 'zeroing',
       });
-      results.push({ type: 'EarningsLog', date: STALE_LOG_DATE, id: rec.id, action: 'zeroed' });
+
+      if (!isValid) {
+        try {
+          await base44.asServiceRole.entities.EarningsLog.update(rec.id, {
+            octa_usd: 0, clore_usd: 0, total_usd: 0,
+          });
+        } catch (e: any) {
+          results[results.length - 1].error = e.message;
+          results[results.length - 1].action = 'error';
+        }
+      }
     }
-    if (!existing?.length) {
-      results.push({ type: 'EarningsLog', date: STALE_LOG_DATE, action: 'not_found' });
-    }
+
+    if (!all?.length) results.push({ type: 'EarningsLog', action: 'no_records_found' });
   } catch (e: any) {
-    results.push({ type: 'EarningsLog', date: STALE_LOG_DATE, action: 'error', error: e.message });
+    results.push({ type: 'EarningsLog', action: 'error', error: e.message });
   }
 
   return Response.json({ message: 'Cleanup complete', results });
