@@ -45,7 +45,6 @@ export default function Dashboard() {
   const { user } = useAuth();
 
   // ── Global state ────────────────────────────────────────────────────────────
-  const [plsData, setPlsData] = useState({ supply: { uiAmount: 18400000 }, price_usd: 0.01 });
   const [myGPUs, setMyGPUs] = useState([]);
   const [myNode, setMyNode] = useState(null);
   const [gpusLoading, setGpusLoading] = useState(true);
@@ -182,7 +181,6 @@ export default function Dashboard() {
 
 
   useEffect(() => {
-    base44.functions.invoke("solanaToken", {}).then(r => { if (r.data) setPlsData(r.data); }).catch(() => {});
     loadClore();
     loadOcta();
     loadEarningsLog();
@@ -206,7 +204,6 @@ export default function Dashboard() {
   }, [user?.email, loadClore, loadOcta, loadEarningsLog]);
 
   // ── Derived values ───────────────────────────────────────────────────────────
-  const plsM = ((plsData?.supply?.uiAmount || 18400000) / 1e6).toFixed(1);
   const activeGPUs = myGPUs.filter(g => g.status === 'active');
   const cloreServers = cloreData?.server_list ?? [];
 
@@ -328,7 +325,6 @@ export default function Dashboard() {
           sub={myGPUs.length > 0 ? "active / registered" : "No GPUs registered"}
           color="amber" icon={Cpu}
         />
-        <StatCard label="PULSE Supply" value={`${plsM}M`} sub={`$${plsData.price_usd} per PULSE`} color="purple" icon={Activity} />
       </div>
 
       {/* ── Revenue projection chart ── */}
