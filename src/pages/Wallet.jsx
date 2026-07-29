@@ -52,8 +52,10 @@ export default function Wallet() {
 
   const lastClaim = claims[0];
 
+  const toUtc = (s) => new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z');
+
   const pendingUsd = useMemo(() => {
-    const since = lastClaim?.created_date ? new Date(lastClaim.created_date) : new Date(0);
+    const since = lastClaim?.created_date ? toUtc(lastClaim.created_date) : new Date(0);
     return earningsLogs
       .filter(e => new Date(e.date) > since)
       .reduce((s, e) => s + (parseFloat(e.total_usd) || 0), 0);
@@ -87,7 +89,7 @@ export default function Wallet() {
           label="Last Payout"
           value={loading ? "..." : lastClaim ? `${lastClaim.amount_pls.toLocaleString()} PULSE` : "—"}
           sub={lastClaim?.created_date
-            ? formatDistanceToNow(new Date(lastClaim.created_date), { addSuffix: true })
+            ? formatDistanceToNow(toUtc(lastClaim.created_date), { addSuffix: true })
             : "No payouts yet"}
           color="amber"
           icon={Zap}
@@ -125,7 +127,7 @@ export default function Wallet() {
                 {claims.map(c => (
                   <tr key={c.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
-                      {c.created_date ? format(new Date(c.created_date), "MMM d, yyyy HH:mm") : "—"}
+                      {c.created_date ? format(toUtc(c.created_date), "MMM d, yyyy HH:mm") : "—"}
                     </td>
                     <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">
                       {c.amount_pls.toLocaleString()} PULSE
