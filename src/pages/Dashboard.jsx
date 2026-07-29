@@ -233,7 +233,8 @@ export default function Dashboard() {
     .reduce((s, sv) => s + (sv.price_per_hour ?? 0) * RENT_HOURS, 0);
   const projectedDaily = parseFloat((octaProjected + cloreProjected).toFixed(2));
 
-  // Build last-7-days chart: use actual EarningsLog where available, null elsewhere
+  // Build last-7-days chart: $0 for days with no EarningsLog record (no gaps)
+  const hasActualData = earningsLog.length > 0;
   const last7 = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - 6 + i);
@@ -241,11 +242,10 @@ export default function Dashboard() {
     const log = earningsLog.find(l => l.date === dateStr);
     return {
       day: d.toLocaleDateString('en-US', { weekday: 'short' }),
-      revenue: log ? parseFloat((log.total_usd ?? 0).toFixed(2)) : null,
+      revenue: parseFloat(((log?.total_usd ?? 0) || 0).toFixed(2)),
     };
   });
-  const hasActualData = last7.some(d => d.revenue !== null);
-  // Fall back to flat projection line until we have real data
+  // Fall back to flat projection line until we have any real data at all
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const revenueChart = hasActualData
     ? last7
