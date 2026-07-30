@@ -132,18 +132,18 @@ Deno.serve(async (req) => {
     );
     const { data: rawGpus, error: gpuError } = await sb
       .from('gpus')
-      .select('user_email, active_platform, platform');
+      .select('user_email, active_platform');
     const gpus = rawGpus ?? [];
 
     if (gpuError) earningsLogResults.push(`GPU query error: ${gpuError.message}`);
-    earningsLogResults.push(`GPU rows found: ${gpus.length} — ${JSON.stringify(gpus.map((g: any) => ({ e: g.user_email, p: g.active_platform ?? g.platform })))}`);
+    earningsLogResults.push(`GPU rows found: ${gpus.length} — ${JSON.stringify(gpus.map((g: any) => ({ e: g.user_email, p: g.active_platform })))}`);
 
 
     const emailsByPlatform = (platform: string) => [
       ...new Set(
         gpus
           .filter((g: any) =>
-            (g.active_platform ?? g.platform ?? '').toLowerCase() === platform.toLowerCase()
+            (g.active_platform ?? '').toLowerCase() === platform.toLowerCase()
           )
           .map((g: any) => g.user_email)
           .filter(Boolean),
