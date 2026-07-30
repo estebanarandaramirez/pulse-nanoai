@@ -115,12 +115,13 @@ Deno.serve(async (req) => {
     treasurySolLamports = solData?.result?.value ?? 0;
   } catch { /* non-fatal, will surface as tx failure */ }
 
-  if (treasurySolLamports < 10_000) {
+  const treasuryWallet = treasury.publicKey.toBase58();
+  if (treasurySolLamports < 1_000_000) {
     return Response.json({
       error: 'Treasury has insufficient SOL for transaction fees',
+      treasury_wallet: treasuryWallet,
       treasury_sol: treasurySolLamports / 1e9,
-      fix: 'Send at least 0.01 SOL to the treasury wallet to cover fees',
-      treasury_wallet: treasury.publicKey.toBase58(),
+      fix: 'Send at least 0.01 SOL to the treasury wallet',
     }, { status: 400 });
   }
 
@@ -231,6 +232,8 @@ Deno.serve(async (req) => {
     dry_run,
     accumulated: accumulateLog,
     distribution: dist,
+    treasury_wallet: treasuryWallet,
+    treasury_sol: treasurySolLamports / 1e9,
     treasury_pulse_balance: Number(treasuryBalance) / 10 ** PULSE_DECIMALS,
     payouts: results,
   });
