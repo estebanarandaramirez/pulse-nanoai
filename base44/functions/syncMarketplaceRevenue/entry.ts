@@ -135,8 +135,7 @@ Deno.serve(async (req) => {
       .select('user_email, active_platform');
     const gpus = rawGpus ?? [];
 
-    if (gpuError) earningsLogResults.push(`GPU query error: ${gpuError.message}`);
-    earningsLogResults.push(`GPU rows found: ${gpus.length} — ${JSON.stringify(gpus.map((g: any) => ({ e: g.user_email, p: g.active_platform })))}`);
+    if (gpuError) throw new Error(`GPU query error: ${gpuError.message}`);
 
 
     const emailsByPlatform = (platform: string) => [
