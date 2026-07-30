@@ -130,9 +130,14 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
-    const { data: gpus = [] } = await sb
+    const { data: rawGpus, error: gpuError } = await sb
       .from('gpus')
       .select('user_email, active_platform, platform');
+    const gpus = rawGpus ?? [];
+
+    if (gpuError) earningsLogResults.push(`GPU query error: ${gpuError.message}`);
+    earningsLogResults.push(`GPU rows found: ${gpus.length} — ${JSON.stringify(gpus.map((g: any) => ({ e: g.user_email, p: g.active_platform ?? g.platform })))}`);
+
 
     const emailsByPlatform = (platform: string) => [
       ...new Set(
@@ -146,7 +151,7 @@ Deno.serve(async (req) => {
     ] as string[];
 
     const octaOwners  = emailsByPlatform('OctaSpace');
-    const cloreOwners = emailsByPlatform('Clore');
+    const cloreOwners = emailsByPlatform('Clore.ai');
 
     if (octa24hUsd > 0 && octaOwners.length > 0) {
       const perUser = octa24hUsd / octaOwners.length;
