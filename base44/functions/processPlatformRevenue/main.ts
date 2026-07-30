@@ -164,13 +164,16 @@ Deno.serve(async (req) => {
       tx.sign(treasury);
       const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 5 });
 
-      try {
-        await connection.confirmTransaction({ signature: txHash, blockhash, lastValidBlockHeight }, 'confirmed');
-      } catch {
+      // Poll up to 60s for confirmation — public RPCs are slow
+      let confirmed = false;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await new Promise(r => setTimeout(r, 5000));
         const status = await connection.getSignatureStatus(txHash, { searchTransactionHistory: true });
-        const ok = status?.value?.confirmationStatus === 'confirmed' || status?.value?.confirmationStatus === 'finalized';
-        if (!ok) throw new Error(`Transaction ${txHash} not confirmed`);
+        const cs = status?.value?.confirmationStatus;
+        if (cs === 'confirmed' || cs === 'finalized') { confirmed = true; break; }
+        if (status?.value?.err) throw new Error(`Transaction ${txHash} failed on-chain: ${JSON.stringify(status.value.err)}`);
       }
+      if (!confirmed) throw new Error(`Transaction ${txHash} not confirmed after 60s`);
 
       // Zero the PendingPayout row only after confirmed tx
       await base44.asServiceRole.entities.PendingPayout.update(row.id!, { pending_usd: 0 });
