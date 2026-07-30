@@ -1,0 +1,32 @@
+{
+  "name": "PendingPayout",
+  "type": "object",
+  "properties": {
+    "user_email": {
+      "type": "string",
+      "description": "User with outstanding unpaid earnings"
+    },
+    "pending_usd": {
+      "type": "number",
+      "description": "Accumulated USD earnings not yet paid out as PULSE. Zeroed on successful payout, left untouched on failure so next cycle retries."
+    }
+  },
+  "required": ["user_email"],
+  "rls": {
+    "create": {
+      "user_condition": { "role": "admin" }
+    },
+    "read": {
+      "$or": [
+        { "data.user_email": "{{user.email}}" },
+        { "user_condition": { "role": "admin" } }
+      ]
+    },
+    "update": {
+      "user_condition": { "role": "admin" }
+    },
+    "delete": {
+      "user_condition": { "role": "admin" }
+    }
+  }
+}

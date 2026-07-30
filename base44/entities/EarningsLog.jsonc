@@ -20,6 +20,10 @@
     "total_usd": {
       "type": "number",
       "description": "octa_usd + clore_usd"
+    },
+    "payout_queued": {
+      "type": "boolean",
+      "description": "True once this record has been moved into PendingPayout. Prevents double-counting across retry cycles."
     }
   },
   "required": [

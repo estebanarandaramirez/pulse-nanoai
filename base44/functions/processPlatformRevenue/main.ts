@@ -1,15 +1,20 @@
 /**
  * processPlatformRevenue
  *
- * Distributes PULSE to GPU node operators based on their ACTUAL earnings
- * since the last payout run, read directly from Supabase earnings_log.
+ * Two-phase daily payout:
+ *   Phase 1 — Accumulate: find EarningsLog records not yet queued (payout_queued != true),
+ *             add their total_usd to PendingPayout per user, mark them payout_queued=true.
+ *   Phase 2 — Pay: for each user with pending_usd > 0, send PULSE tokens.
+ *             On success → zero the PendingPayout row.
+ *             On failure → leave it; next cycle retries automatically.
  *
- * Each user receives PULSE = (their_earnings_usd * 60%) / $0.01_per_PULSE
- * 40% stays in treasury as reserve.
+ * This means a failed transaction never orphans earnings — the balance stays and
+ * is retried next cycle without any manual override_since_date dance.
  *
  * Call with { dry_run: true } to preview without sending transactions.
- *
- * Required env vars: TREASURY_PRIVATE_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ * Call with { seed_since: "YYYY-MM-DD" } to only queue records from that date onwards
+ * (useful for initial migration — manually mark older already-paid records payout_queued=true
+ * in the entity editor, then run with seed_since to pick up genuinely unpaid ones).
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 import {
@@ -37,50 +42,58 @@ Deno.serve(async (req) => {
   } catch {}
 
   const treasuryKey = Deno.env.get('TREASURY_PRIVATE_KEY');
-
   if (!treasuryKey) return Response.json({ error: 'TREASURY_PRIVATE_KEY not set' }, { status: 500 });
 
   const body = await req.json().catch(() => ({}));
   const dry_run: boolean = !!body.dry_run;
+  const seed_since: string | undefined = body.seed_since; // optional date floor for initial migration
 
-  // ── 1. Active PayoutSchedule → get last_run_at ───────────────────────────
-  const schedules = await base44.asServiceRole.entities.PayoutSchedule.filter({ is_active: true });
-  if (!schedules?.length) {
-    return Response.json({ message: 'No active PayoutSchedule. Create one in base44 entities with is_active: true.' });
-  }
-  const schedule = schedules[0];
-  // override_since_date lets an admin force a lookback past the stored last_run_at
-  const sinceDate = (body.override_since_date as string)
-    ?? (schedule.last_run_at ? new Date(schedule.last_run_at).toISOString().slice(0, 10) : '2000-01-01');
+  // ── Phase 1: Accumulate unqueued EarningsLog → PendingPayout ────────────────
+  const accumulateLog: string[] = [];
 
-  // ── 2. Sum earnings per user since last payout ───────────────────────────
   const allLogs = await base44.asServiceRole.entities.EarningsLog.list();
-  const logs = (allLogs ?? []).filter(
-    (l: any) => (l.date ?? '') > sinceDate && (parseFloat(l.total_usd) || 0) > 0
-  );
+  const unqueued = (allLogs ?? []).filter((l: any) => {
+    if (l.payout_queued === true) return false;
+    if ((parseFloat(l.total_usd) || 0) <= 0) return false;
+    if (seed_since && (l.date ?? '') < seed_since) return false;
+    return true;
+  });
 
-  if (!logs.length) {
-    return Response.json({ message: `No earnings recorded since ${sinceDate}. Nothing to distribute.` });
+  for (const log of unqueued) {
+    if (!log.user_email) continue;
+    const addUsd = parseFloat(log.total_usd) || 0;
+
+    if (!dry_run) {
+      // Upsert PendingPayout: increment pending_usd
+      const existing = await base44.asServiceRole.entities.PendingPayout.filter({ user_email: log.user_email });
+      if (existing?.length > 0) {
+        const newBal = parseFloat(((parseFloat(existing[0].pending_usd) || 0) + addUsd).toFixed(6));
+        await base44.asServiceRole.entities.PendingPayout.update(existing[0].id, { pending_usd: newBal });
+      } else {
+        await base44.asServiceRole.entities.PendingPayout.create({ user_email: log.user_email, pending_usd: addUsd });
+      }
+      // Mark as queued so it's never double-counted
+      await base44.asServiceRole.entities.EarningsLog.update(log.id, { payout_queued: true });
+    }
+    accumulateLog.push(`queued $${addUsd} for ${log.user_email} (date: ${log.date})`);
   }
 
-  const userEarnings: Record<string, number> = {};
-  for (const row of logs) {
-    if (!row.user_email) continue;
-    userEarnings[row.user_email] = (userEarnings[row.user_email] ?? 0) + (parseFloat(row.total_usd) || 0);
+  // ── Phase 2: Pay from PendingPayout ─────────────────────────────────────────
+  const allPending = await base44.asServiceRole.entities.PendingPayout.list();
+  const payable = (allPending ?? []).filter((p: any) => (parseFloat(p.pending_usd) || 0) > 0);
+
+  if (payable.length === 0 && unqueued.length === 0) {
+    return Response.json({ message: 'Nothing to pay — no pending balances and no unqueued earnings.' });
   }
 
-  const totalUSD     = Object.values(userEarnings).reduce((s, v) => s + v, 0);
-  const userShareUSD = totalUSD * USER_SHARE;
-  const totalPulse   = userShareUSD / PULSE_PRICE;
-
-  // ── 3. User → Solana wallet map ──────────────────────────────────────────
+  // User → Solana wallet map
   const allUsers = await base44.asServiceRole.entities.User.list();
   const walletMap: Record<string, string> = {};
   for (const u of allUsers ?? []) {
     if (u.email && u.solana_wallet) walletMap[u.email] = u.solana_wallet;
   }
 
-  // ── 4. Treasury keypair ───────────────────────────────────────────────────
+  // Treasury keypair
   const trimmed = treasuryKey.trim();
   const secretBytes = trimmed.startsWith('[')
     ? Uint8Array.from(JSON.parse(trimmed))
@@ -88,8 +101,7 @@ Deno.serve(async (req) => {
   const treasury = Keypair.fromSecretKey(secretBytes);
   const connection = new Connection(RPC_URL, 'confirmed');
 
-  // ── 5. Verify treasury PULSE balance ─────────────────────────────────────
-  // Token account verified on-chain: 6Kwsa4upYKvvPCQvZH2LxQu5oZaCu3hShJrcTqpuA6B
+  // Verify treasury PULSE balance
   const TREASURY_ATA = '6Kwsa4upYKvvPCQvZH2LxQu5oZaCu3hShJrcTqpuA6B';
   const treasuryAta = new PublicKey(TREASURY_ATA);
   let treasuryBalance = 0n;
@@ -97,121 +109,128 @@ Deno.serve(async (req) => {
     const rpcRes = await fetch(RPC_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method: 'getTokenAccountBalance',
-        params: [TREASURY_ATA],
-      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenAccountBalance', params: [TREASURY_ATA] }),
     });
     const rpcData = await rpcRes.json();
     const amount = rpcData?.result?.value?.amount;
-    if (!amount) throw new Error(`RPC returned no balance. Raw: ${JSON.stringify(rpcData).slice(0, 300)}`);
+    if (!amount) throw new Error(`RPC returned no balance: ${JSON.stringify(rpcData).slice(0, 200)}`);
     treasuryBalance = BigInt(amount);
   } catch (e: any) {
-    return Response.json({
-      error: 'Treasury PULSE balance check failed',
-      detail: e?.message ?? String(e),
-    }, { status: 400 });
+    return Response.json({ error: 'Treasury balance check failed', detail: e.message }, { status: 400 });
   }
 
-  const totalPulseLamports = BigInt(Math.floor(totalPulse * 10 ** PULSE_DECIMALS));
-  if (!dry_run && treasuryBalance < totalPulseLamports) {
-    return Response.json({
-      error: 'Insufficient PULSE in treasury',
-      treasury_has: Number(treasuryBalance) / 10 ** PULSE_DECIMALS,
-      needs: totalPulse,
-    }, { status: 400 });
-  }
-
-  // ── 6. Distribute ─────────────────────────────────────────────────────────
   const dist = { success: 0, failed: 0, skipped_no_wallet: 0 };
   const payouts: any[] = [];
 
-  for (const [email, earned] of Object.entries(userEarnings)) {
-    if (earned <= 0) continue;
+  // Use dry_run-adjusted payable list (in dry_run, simulate from unqueued totals)
+  const dryRunPayable: { user_email: string; pending_usd: number }[] = dry_run
+    ? Object.entries(
+        unqueued.reduce((acc: Record<string, number>, l: any) => {
+          acc[l.user_email] = (acc[l.user_email] ?? 0) + (parseFloat(l.total_usd) || 0);
+          return acc;
+        }, {} as Record<string, number>)
+      ).map(([user_email, pending_usd]) => ({ user_email, pending_usd }))
+    : payable.map((p: any) => ({ user_email: p.user_email, pending_usd: parseFloat(p.pending_usd) || 0, _id: p.id }));
 
-    const walletAddr = walletMap[email];
+  for (const row of (dry_run ? dryRunPayable : payable)) {
+    const pendingUsd = parseFloat((row as any).pending_usd) || 0;
+    if (pendingUsd <= 0) continue;
+
+    const walletAddr = walletMap[(row as any).user_email];
     if (!walletAddr) {
       dist.skipped_no_wallet++;
-      payouts.push({ email, earned_usd: earned, status: 'skipped — no solana_wallet on User profile' });
+      payouts.push({ email: (row as any).user_email, pending_usd: pendingUsd, status: 'skipped — no solana_wallet' });
       continue;
     }
 
-    const userPulse    = (earned * USER_SHARE) / PULSE_PRICE;
+    const userPulse    = (pendingUsd * USER_SHARE) / PULSE_PRICE;
     const userLamports = BigInt(Math.floor(userPulse * 10 ** PULSE_DECIMALS));
 
     if (dry_run) {
       dist.success++;
       payouts.push({
-        email,
+        email: (row as any).user_email,
         wallet: walletAddr.slice(0, 8) + '...',
-        earned_usd: parseFloat(earned.toFixed(4)),
-        user_share_usd: parseFloat((earned * USER_SHARE).toFixed(4)),
+        pending_usd: parseFloat(pendingUsd.toFixed(4)),
+        user_share_usd: parseFloat((pendingUsd * USER_SHARE).toFixed(4)),
         pulse_out: parseFloat(userPulse.toFixed(2)),
         status: 'dry_run',
       });
       continue;
     }
 
+    const totalLamports = BigInt(Math.floor(
+      (dryRunPayable.reduce((s, r) => s + (r.pending_usd * USER_SHARE / PULSE_PRICE), 0)) * 10 ** PULSE_DECIMALS
+    ));
+    if (treasuryBalance < totalLamports) {
+      return Response.json({
+        error: 'Insufficient PULSE in treasury',
+        treasury_has: Number(treasuryBalance) / 10 ** PULSE_DECIMALS,
+        needs: Number(totalLamports) / 10 ** PULSE_DECIMALS,
+      }, { status: 400 });
+    }
+
     try {
       const recipientPubkey = new PublicKey(walletAddr);
       const recipientAta = await getOrCreateAssociatedTokenAccount(
-        connection, treasury, PULSE_MINT, recipientPubkey
+        connection, treasury, PULSE_MINT, recipientPubkey,
       );
-      // Get fresh blockhash immediately before signing to avoid expiry
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       const tx = new Transaction({ recentBlockhash: blockhash, feePayer: treasury.publicKey }).add(
-        createTransferInstruction(treasuryAta!, recipientAta.address, treasury.publicKey, userLamports)
+        createTransferInstruction(treasuryAta, recipientAta.address, treasury.publicKey, userLamports)
       );
       tx.sign(treasury);
-      const rawTx = tx.serialize();
-      const txHash = await connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 });
+      const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 5 });
       try {
         await connection.confirmTransaction({ signature: txHash, blockhash, lastValidBlockHeight }, 'confirmed');
       } catch {
-        // Confirmation timed out — check if it actually landed on-chain
         const status = await connection.getSignatureStatus(txHash, { searchTransactionHistory: true });
         const confirmed = status?.value?.confirmationStatus === 'confirmed' || status?.value?.confirmationStatus === 'finalized';
         if (!confirmed) throw new Error(`Transaction ${txHash} not confirmed`);
       }
 
+      // Zero out PendingPayout only after confirmed transaction
+      await base44.asServiceRole.entities.PendingPayout.update((row as any)._id, { pending_usd: 0 });
+
       await base44.asServiceRole.entities.ClaimEvent.create({
-        amount_pls: userPulse, tx_hash: txHash, status: 'confirmed', user_email: email,
+        amount_pls: userPulse, tx_hash: txHash, status: 'confirmed', user_email: (row as any).user_email,
       }).catch(() => {});
 
       dist.success++;
       payouts.push({
-        email,
+        email: (row as any).user_email,
         wallet: walletAddr.slice(0, 8) + '...',
-        earned_usd: parseFloat(earned.toFixed(4)),
+        pending_usd: parseFloat(pendingUsd.toFixed(4)),
         pulse_out: parseFloat(userPulse.toFixed(2)),
         tx_hash: txHash,
         status: 'confirmed',
       });
     } catch (e: any) {
+      // Leave PendingPayout unchanged — next cycle retries automatically
       dist.failed++;
-      payouts.push({ email, earned_usd: earned, pulse_out: userPulse, status: 'failed', error: e.message });
+      payouts.push({ email: (row as any).user_email, pending_usd: pendingUsd, status: 'failed', error: e.message });
     }
   }
 
-  // ── 7. Update schedule ────────────────────────────────────────────────────
+  // Update PayoutSchedule for display/audit only (last_run_at always advances — failures are handled by PendingPayout)
   if (!dry_run) {
-    await base44.asServiceRole.entities.PayoutSchedule.update(schedule.id, {
-      last_run_at: new Date().toISOString(),
-      last_run_status: dist.failed === 0 ? 'success' : 'partial_failure',
-      last_run_tx_count: dist.success,
-    });
+    try {
+      const schedules = await base44.asServiceRole.entities.PayoutSchedule.filter({ is_active: true });
+      if (schedules?.length > 0) {
+        await base44.asServiceRole.entities.PayoutSchedule.update(schedules[0].id, {
+          last_run_at: new Date().toISOString(),
+          last_run_status: dist.failed === 0 ? 'success' : 'partial_failure',
+          last_run_tx_count: dist.success,
+        });
+      }
+    } catch { /* non-fatal */ }
   }
 
   return Response.json({
     dry_run,
-    since_date: sinceDate,
-    total_revenue_usd: parseFloat(totalUSD.toFixed(4)),
-    user_share_usd: parseFloat(userShareUSD.toFixed(4)),
-    treasury_reserve_usd: parseFloat((totalUSD * (1 - USER_SHARE)).toFixed(4)),
-    pulse_price_usd: PULSE_PRICE,
-    total_pulse_distributed: parseFloat(totalPulse.toFixed(2)),
-    treasury_pulse_before: Number(treasuryBalance) / 10 ** PULSE_DECIMALS,
+    accumulated: accumulateLog,
+    total_pulse_distributed: parseFloat(payouts.filter(p => p.status !== 'failed' && p.status !== 'skipped — no solana_wallet').reduce((s, p) => s + (p.pulse_out ?? 0), 0).toFixed(2)),
+    treasury_pulse_balance: Number(treasuryBalance) / 10 ** PULSE_DECIMALS,
     distribution: dist,
     payouts,
   });
