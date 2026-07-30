@@ -7,11 +7,9 @@ earnings/heartbeats, and handles PLS/$PULSE token payouts and treasury operation
 - Frontend: Vite + React, deployed via base44 (`base44-app`, see `package.json`).
 - Backend: base44 serverless functions in `base44/functions/*` (Deno-style, one folder
   per function).
-- **Deployment**: `git push` alone does NOT deploy anything. The base44 platform
-  maintains its own copy of each function's code independently of git. To deploy a
-  function change, the user must update the code in the base44 dashboard UI and click
-  deploy — or run `npx base44 deploy` locally (requires a `.app.jsonc` link file that
-  is gitignored). Always tell the user to deploy from the dashboard after editing.
+- **Deployment**: base44 is connected to GitHub and syncs automatically on every push to
+  `main`. `git push origin main` deploys all changed functions. No manual dashboard
+  step needed.
 
 ## base44 function layout
 
