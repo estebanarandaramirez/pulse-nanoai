@@ -104,6 +104,26 @@ Deno.serve(async (req) => {
   const treasury  = Keypair.fromSecretKey(secretBytes);
   const connection = new Connection(RPC_URL, 'confirmed');
 
+  // Treasury SOL balance (needed for tx fees — must be > 0)
+  let treasurySolLamports = 0;
+  try {
+    const solRes  = await fetch(RPC_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [treasury.publicKey.toBase58()] }),
+    });
+    const solData = await solRes.json();
+    treasurySolLamports = solData?.result?.value ?? 0;
+  } catch { /* non-fatal, will surface as tx failure */ }
+
+  if (treasurySolLamports < 10_000) {
+    return Response.json({
+      error: 'Treasury has insufficient SOL for transaction fees',
+      treasury_sol: treasurySolLamports / 1e9,
+      fix: 'Send at least 0.01 SOL to the treasury wallet to cover fees',
+      treasury_wallet: treasury.publicKey.toBase58(),
+    }, { status: 400 });
+  }
+
   // Treasury PULSE balance
   let treasuryBalance = 0n;
   try {
@@ -116,7 +136,7 @@ Deno.serve(async (req) => {
     if (!amount) throw new Error(`No balance in RPC response: ${JSON.stringify(rpcData).slice(0, 200)}`);
     treasuryBalance = BigInt(amount);
   } catch (e: any) {
-    return Response.json({ error: 'Treasury balance check failed', detail: e.message }, { status: 400 });
+    return Response.json({ error: 'Treasury PULSE balance check failed', detail: e.message }, { status: 400 });
   }
 
   const dist   = { success: 0, failed: 0, skipped_no_wallet: 0 };
