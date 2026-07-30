@@ -15,7 +15,7 @@
  *                              (use during initial migration to skip already-paid records)
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-import { Connection, PublicKey, Keypair, Transaction } from 'npm:@solana/web3.js@1.98.0';
+import { Connection, PublicKey, Keypair, Transaction, ComputeBudgetProgram } from 'npm:@solana/web3.js@1.98.0';
 import { createTransferInstruction, getOrCreateAssociatedTokenAccount } from 'npm:@solana/spl-token@0.4.9';
 import bs58 from 'npm:bs58@6.0.0';
 
@@ -180,9 +180,11 @@ Deno.serve(async (req) => {
       const recipientAta    = await getOrCreateAssociatedTokenAccount(connection, treasury, PULSE_MINT, recipientPubkey);
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       const tx = new Transaction({ recentBlockhash: blockhash, feePayer: treasury.publicKey })
+        .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100_000 }))
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 50_000 }))
         .add(createTransferInstruction(treasuryPub, recipientAta.address, treasury.publicKey, lamports));
       tx.sign(treasury);
-      const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 5 });
+      const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 5 });
 
       // Poll up to 60s for confirmation — public RPCs are slow
       let confirmed = false;
