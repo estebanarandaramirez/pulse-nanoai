@@ -35,10 +35,14 @@ Deno.serve(async (req) => {
 
   if (ENABLED.octaspace) {
     try {
-      const res = await base44.asServiceRole.functions.invoke('fetchOctaspaceEarnings', {});
-      // total_income_24h_usd = rolling 24h income — what we want for daily earnings
-      // total_earnings_usd = wallet balance (cumulative) — do NOT use for payout calc
-      octa24hUsd = parseFloat(res.data?.total_income_24h_usd ?? 0) || 0;
+      // getOctaNodeInfo scrapes the cube.octa.computer portal — the only reliable
+      // source of 24h income. The REST API (fetchOctaspaceEarnings) doesn't expose
+      // per-node daily income fields, so total_income_24h_usd is always 0 there.
+      const res = await base44.asServiceRole.functions.invoke('getOctaNodeInfo', {});
+      const nodes = res.data?.nodes ?? [];
+      octa24hUsd = parseFloat(
+        nodes.reduce((s: number, n: any) => s + (parseFloat(n.income_24h_usd) || 0), 0).toFixed(4)
+      );
       breakdown.octaspace_usd = octa24hUsd;
     } catch (e: any) {
       console.error('OctaSpace sync failed:', e.message);
