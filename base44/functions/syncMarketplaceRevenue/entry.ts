@@ -9,6 +9,7 @@
  * (wallet balance) — the balance is cumulative and would double-count across payouts.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const ENABLED = {
   cloreai:   Deno.env.get('CLOREAI_ENABLED') !== 'false' && !!Deno.env.get('CLOREAI_API_KEY'),
@@ -125,8 +126,13 @@ Deno.serve(async (req) => {
   };
 
   try {
-    const allGPUs = await base44.asServiceRole.entities.GPU.list();
-    const gpus = allGPUs ?? [];
+    const sb = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    const { data: gpus = [] } = await sb
+      .from('gpus')
+      .select('user_email, active_platform, platform');
 
     const emailsByPlatform = (platform: string) => [
       ...new Set(
