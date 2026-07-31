@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle, Copy, Download, ExternalLink, LayoutGrid } from "lucide-react";
+import { Copy, Download, ExternalLink, LayoutDashboard } from "lucide-react";
 import SectionTitle from "../components/shared/SectionTitle";
 
 const STEPS = ["Download Installer", "Run Installer", "Now Earning"];
@@ -107,63 +107,63 @@ export default function ConnectGPU() {
   };
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-8 max-w-3xl">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse-glow" />
-        <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">
+        <span className="w-2.5 h-2.5 rounded-full bg-neon-green animate-pulse-glow" />
+        <h1 className="font-display font-bold text-2xl tracking-[3px] uppercase text-foreground">
           Connect GPU
         </h1>
       </div>
 
       {/* Platform selector */}
       <div>
-        <div className="text-[10px] font-mono tracking-[2px] uppercase text-muted-foreground mb-3">
+        <div className="text-[11px] font-mono tracking-[2px] uppercase text-muted-foreground mb-4">
           Step 1 — Choose Your Platform
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           {PLATFORMS.map((p) => {
             const active = selectedPlatform === p.id;
             return (
               <button
                 key={p.id}
                 onClick={() => { setSelectedPlatform(p.id); setDownloaded(false); setShowBlocked(false); }}
-                className={`text-left p-4 rounded-md border transition-all ${
+                className={`text-left p-5 rounded-md border transition-all ${
                   active
                     ? `${p.activeBorderClass} ${p.activeBgClass}`
                     : `${p.borderClass} bg-card hover:${p.activeBgClass}`
                 }`}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className={`text-[11px] font-mono font-semibold ${active ? p.textClass : "text-foreground"}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className={`text-sm font-mono font-semibold ${active ? p.textClass : "text-foreground"}`}>
                     {p.name}
                   </span>
-                  <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded ${p.badgeClass}`}>
+                  <span className={`text-[9px] font-mono px-2 py-0.5 rounded ${p.badgeClass}`}>
                     {p.badge}
                   </span>
                 </div>
-                <p className="text-[9px] text-muted-foreground leading-relaxed">{p.description}</p>
-                <p className="text-[8px] font-mono text-muted-foreground/60 mt-1.5">Ports: {p.ports}</p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">{p.description}</p>
+                <p className="text-[10px] font-mono text-muted-foreground/60 mt-2">Ports: {p.ports}</p>
               </button>
             );
           })}
         </div>
         {platform?.extraNote && (
-          <div className="mt-2 flex items-start gap-1.5 text-[9px] font-mono text-purple/80">
-            <ExternalLink className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <div className="mt-3 flex items-start gap-2 text-[11px] font-mono text-purple/80">
+            <ExternalLink className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
             {platform.extraNote}
           </div>
         )}
       </div>
 
       {/* Download button */}
-      <div className={`bg-card border rounded-md p-4 relative card-gradient-top ${platform?.borderClass ?? "border-border"}`}>
-        <div className="flex items-start justify-between gap-4">
+      <div className={`bg-card border rounded-md p-6 relative card-gradient-top ${platform?.borderClass ?? "border-border"}`}>
+        <div className="flex items-start justify-between gap-6">
           <div>
-            <div className={`text-[10px] font-mono tracking-[2px] uppercase mb-1 ${platform?.textClass ?? "text-cyan"}`}>
+            <div className={`text-[11px] font-mono tracking-[2px] uppercase mb-2 ${platform?.textClass ?? "text-cyan"}`}>
               Step 2 — Download &amp; Run Setup
             </div>
-            <p className="text-[9px] font-mono text-muted-foreground leading-relaxed">
+            <p className="text-[11px] font-mono text-muted-foreground leading-relaxed">
               Download and <span className="text-foreground">double-click</span>{" "}
               <span className={platform?.textClass ?? "text-cyan"}>{platform?.filename}</span>.<br />
               If you see <span className="text-foreground">"Open File — Security Warning"</span>, click{" "}
@@ -175,15 +175,15 @@ export default function ConnectGPU() {
           <button
             onClick={downloadSetupScript}
             disabled={scriptLoading}
-            className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 border rounded-md text-[10px] font-mono transition-all ${
+            className={`flex-shrink-0 flex items-center gap-2 px-5 py-2.5 border rounded-md text-[11px] font-mono transition-all ${
               platform?.id === "octaspace"
                 ? "bg-purple/10 border-purple/40 hover:border-purple hover:bg-purple/20 text-purple"
                 : "bg-cyan/10 border-cyan/40 hover:border-cyan hover:bg-cyan/20 text-cyan"
             }`}
           >
             {scriptLoading
-              ? <div className={`w-3 h-3 border border-t-transparent rounded-full animate-spin ${platform?.id === "octaspace" ? "border-purple" : "border-cyan"}`} />
-              : <Download className="w-3 h-3" />}
+              ? <div className={`w-3.5 h-3.5 border border-t-transparent rounded-full animate-spin ${platform?.id === "octaspace" ? "border-purple" : "border-cyan"}`} />
+              : <Download className="w-3.5 h-3.5" />}
             {scriptLoading ? "Generating..." : platform?.filename}
           </button>
         </div>
@@ -246,7 +246,7 @@ export default function ConnectGPU() {
       <div className="flex items-center gap-2">
         {STEPS.map((s, i) => (
           <div key={s} className="flex items-center gap-2">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-[9px] tracking-[1px] uppercase font-mono transition-colors
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-md border text-[10px] tracking-[1px] uppercase font-mono transition-colors
               ${i === 0 && downloaded
                 ? "border-neon-green/40 bg-neon-green/10 text-neon-green"
                 : i === 1 && downloaded
@@ -254,39 +254,36 @@ export default function ConnectGPU() {
                 : i === 2 && downloaded
                 ? `${platform?.activeBorderClass ?? "border-cyan"} ${platform?.activeBgClass ?? "bg-cyan/10"} ${platform?.textClass ?? "text-cyan"}`
                 : "border-border text-muted-foreground"}`}>
-              <span className="font-mono text-[8px]">0{i + 1}</span>
+              <span className="font-mono text-[9px]">0{i + 1}</span>
               {s}
             </div>
-            {i < STEPS.length - 1 && <div className="w-4 h-px bg-border" />}
+            {i < STEPS.length - 1 && <div className="w-6 h-px bg-border" />}
           </div>
         ))}
       </div>
 
       {/* Step 3 — completion */}
-      <div className={`bg-card border rounded-md p-5 relative card-gradient-top ${platform?.borderClass ?? "border-border"}`}>
+      <div className={`bg-card border rounded-md p-6 relative card-gradient-top ${platform?.borderClass ?? "border-border"}`}>
         <SectionTitle>Step 3 — You're Done</SectionTitle>
-        <p className="text-[9px] font-mono text-muted-foreground mt-2 leading-relaxed">
+        <p className="text-[11px] font-mono text-muted-foreground mt-3 leading-relaxed">
           The installer handles everything — GPU detection, service setup, and registration with the Pulse network.
-          Once it completes, your GPU appears automatically in the fleet.
+          Once it completes, your GPU will appear automatically on your home page.
         </p>
         {selectedPlatform === "octaspace" && (
-          <div className="mt-3 flex items-start gap-1.5 text-[9px] font-mono text-purple">
-            <ExternalLink className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <div className="mt-3 flex items-start gap-2 text-[11px] font-mono text-purple">
+            <ExternalLink className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
             One manual step: register your node token at cube.octa.computer → Hosting → Nodes → Add Node
           </div>
         )}
-        <div className="mt-4 flex items-center gap-3">
-          <a href="/gpu-fleet"
-            className={`inline-flex items-center gap-2 px-4 py-2 border rounded-md text-[10px] font-mono transition-all
+        <div className="mt-5">
+          <a href="/dashboard"
+            className={`inline-flex items-center gap-2 px-5 py-2.5 border rounded-md text-[11px] font-mono transition-all
               ${platform?.id === "octaspace"
                 ? "bg-purple/10 border-purple/40 hover:border-purple text-purple"
                 : "bg-cyan/10 border-cyan/40 hover:border-cyan text-cyan"}`}>
-            <LayoutGrid className="w-3 h-3" />
-            View GPU Fleet
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            Go to Dashboard
           </a>
-          <span className="text-[9px] font-mono text-muted-foreground">
-            Your GPU will appear here once the installer completes.
-          </span>
         </div>
       </div>
     </div>

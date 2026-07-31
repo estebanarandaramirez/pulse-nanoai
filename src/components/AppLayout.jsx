@@ -73,19 +73,21 @@ export default function AppLayout({ children }) {
           <NavItem key={item.path} item={item} active={location.pathname === item.path} onClick={() => setSidebarOpen(false)} />
         ))}
 
-        <div className="my-3 border-t border-sidebar-border" />
-
-        <button
-          onClick={() => setAdminOpen(p => !p)}
-          className="flex items-center justify-between w-full px-3 py-1.5 text-[8px] tracking-[2px] uppercase text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Administration
-          {adminOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        </button>
-
-        {adminOpen && NAV_ADMIN_SECTION.map(item => (
-          <NavItem key={item.path} item={item} active={location.pathname === item.path} onClick={() => setSidebarOpen(false)} />
-        ))}
+        {user?.role === "admin" && (
+          <>
+            <div className="my-3 border-t border-sidebar-border" />
+            <button
+              onClick={() => setAdminOpen(p => !p)}
+              className="flex items-center justify-between w-full px-3 py-1.5 text-[8px] tracking-[2px] uppercase text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Administration
+              {adminOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
+            {adminOpen && NAV_ADMIN_SECTION.map(item => (
+              <NavItem key={item.path} item={item} active={location.pathname === item.path} onClick={() => setSidebarOpen(false)} />
+            ))}
+          </>
+        )}
 
         {user?.role === "admin" && (
           <>

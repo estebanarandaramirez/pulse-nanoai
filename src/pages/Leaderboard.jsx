@@ -12,31 +12,10 @@ function maskEmail(email) {
   return `${local.slice(0, 2)}${"*".repeat(Math.max(2, local.length - 2))}@${domain}`;
 }
 
-// Build per-user aggregates from a flat list of GPU records
-function buildRankings(gpus) {
-  const byUser = {};
-  for (const gpu of gpus) {
-    const key = gpu.user_email ?? "unknown";
-    if (!byUser[key]) {
-      byUser[key] = {
-        user_email: key,
-        total_earned_usd: 0,
-        daily_earned_usd: 0,
-        gpu_models: [],
-        gpu_count: 0,
-      };
-    }
-    byUser[key].total_earned_usd += gpu.total_earned_usd ?? 0;
-    byUser[key].daily_earned_usd += gpu.daily_earned_usd ?? 0;
-    if (gpu.model && !byUser[key].gpu_models.includes(gpu.model)) {
-      byUser[key].gpu_models.push(gpu.model);
-    }
-    byUser[key].gpu_count += 1;
-  }
-
-  return Object.values(byUser)
-    .sort((a, b) => b.total_earned_usd - a.total_earned_usd)
-    .map((u, i) => ({ ...u, rank: i + 1 }));
+function rankByField(rankings, field) {
+  return [...rankings]
+    .sort((a, b) => b[field] - a[field])
+    .map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 export default function Leaderboard() {
@@ -48,9 +27,9 @@ export default function Leaderboard() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await base44.functions.invoke('getGPUFleet', {});
-      const gpus = res.data?.gpus || [];
-      setRankings(buildRankings(gpus));
+      const res = await base44.functions.invoke('getLeaderboard', {});
+      const raw = res.data?.rankings || [];
+      setRankings(rankByField(raw, "total_earned_usd"));
     } catch {
       // Stay with whatever we have
     } finally {
@@ -62,10 +41,10 @@ export default function Leaderboard() {
 
   const sorted =
     tab === "daily"
-      ? [...rankings].sort((a, b) => b.daily_earned_usd - a.daily_earned_usd).map((r, i) => ({ ...r, rank: i + 1 }))
+      ? rankByField(rankings, "daily_earned_usd")
       : rankings;
 
-  const myEntry = sorted.find(r => r.user_email === user?.email);
+  const myEntry = sorted.find(r => r.is_me);
 
   return (
     <div className="space-y-6">
@@ -152,7 +131,7 @@ export default function Leaderboard() {
               </thead>
               <tbody>
                 {sorted.slice(0, 100).map(entry => {
-                  const isMe = entry.user_email === user?.email;
+                  const isMe = entry.is_me;
                   const value = tab === "daily" ? entry.daily_earned_usd : entry.total_earned_usd;
                   return (
                     <tr
