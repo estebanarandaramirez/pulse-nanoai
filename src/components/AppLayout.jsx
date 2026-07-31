@@ -6,7 +6,7 @@ import PhantomConnect from "./shared/PhantomConnect";
 import {
   LayoutDashboard, Cpu, User, Database, BarChart3, Activity,
   TrendingUp, Bell, RefreshCw, Clock, Calculator, ShieldAlert, Menu, X,
-  ChevronDown, ChevronRight, LogOut, Zap, Coins, DollarSign, Trophy
+  ChevronDown, ChevronRight, LogOut, Zap, Coins, DollarSign, Trophy, FileWarning
 } from "lucide-react";
 
 const NAV_MAIN = [
@@ -95,6 +95,7 @@ export default function AppLayout({ children }) {
             <NavItem item={{ label: "Admin", path: "/admin", icon: ShieldAlert }} active={location.pathname === "/admin"} onClick={() => setSidebarOpen(false)} />
             <NavItem item={{ label: "Payout Scheduler", path: "/admin/payouts", icon: Coins }} active={location.pathname === "/admin/payouts"} onClick={() => setSidebarOpen(false)} />
             <NavItem item={{ label: "Treasury", path: "/admin/treasury", icon: DollarSign }} active={location.pathname === "/admin/treasury"} onClick={() => setSidebarOpen(false)} />
+            <NavItem item={{ label: "Install Reports", path: "/admin/install-reports", icon: FileWarning }} active={location.pathname === "/admin/install-reports"} onClick={() => setSidebarOpen(false)} />
           </>
         )}
       </nav>

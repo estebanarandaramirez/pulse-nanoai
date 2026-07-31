@@ -45,6 +45,18 @@ function Write-Log {
     }
 }
 
+function Upload-InstallLog {
+    param([string]$Step)
+    try {
+        $lc = if (Test-Path $LOG_FILE) { [System.IO.File]::ReadAllText($LOG_FILE, [System.Text.Encoding]::UTF8) } else { "(no log file)" }
+        $payload = [System.Text.Encoding]::UTF8.GetBytes((@{platform="octaspace";error_step=$Step;log_content=$lc} | ConvertTo-Json -Compress -Depth 2))
+        Invoke-RestMethod -Method POST -Uri "$PULSE_API_BASE/reportInstallIssue" `
+            -Headers @{"Authorization"="Bearer $PULSE_USER_TOKEN";"Content-Type"="application/json"} `
+            -Body $payload -TimeoutSec 30 | Out-Null
+        Write-Log "Install report uploaded to Pulse support" "OK"
+    } catch { Write-Log "Could not upload install report (non-fatal): $_" "WARN" }
+}
+
 function Show-Banner {
     param([string]$subtitle = "")
     Clear-Host
@@ -177,7 +189,7 @@ function Invoke-Phase1 {
     if ($build -lt 19041) {
         Set-Step "Windows compatibility (build 19041+)" "FAIL" "Build $build — requires 19041 (Windows 10 2004+)"
         Write-Log "Windows build $build is too old. WSL2 requires build 19041+ (Windows 10 2004+)." "ERROR"
-        Show-Diagnostics; Wait-ForKey; exit 1
+        Upload-InstallLog "windows_too_old"; Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "Windows build $build — OK" "OK"
     Set-Step "Windows compatibility (build 19041+)" "PASS" "Build $build"
@@ -188,7 +200,7 @@ function Invoke-Phase1 {
     if (-not $gpu) {
         Set-Step "GPU detected" "FAIL" "No NVIDIA/AMD GPU found"
         Write-Log "No supported GPU detected. Pulse requires an NVIDIA or AMD GPU." "ERROR"
-        Show-Diagnostics; Wait-ForKey; exit 1
+        Upload-InstallLog "no_gpu_detected"; Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "GPU: $gpu" "OK"
     Set-Step "GPU detected" "PASS" $gpu
@@ -199,6 +211,7 @@ function Invoke-Phase1 {
     if ($virtEnabled -eq $false) {
         Set-Step "Virtualization enabled in BIOS" "FAIL" "Disabled — see BIOS instructions below"
         Write-Log "Hardware virtualization is disabled in your BIOS/UEFI." "ERROR"
+        Upload-InstallLog "virtualization_disabled"
         Write-Host ""
         Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Red
         Write-Host "  │  ACTION REQUIRED: Enable virtualization in your BIOS/UEFI    │" -ForegroundColor Red
@@ -311,7 +324,7 @@ function Invoke-Phase2 {
         $check = wsl -d Ubuntu-22.04 --user root -- bash -c "echo ok" 2>&1
         if ($check -notmatch "ok") {
             Write-Log "Ubuntu-22.04 root access failed — re-run installer." "ERROR"
-            Show-Diagnostics; Wait-ForKey; exit 1
+            Upload-InstallLog "ubuntu_root_access_failed"; Show-Diagnostics; Wait-ForKey; exit 1
         }
         Write-Log "Ubuntu-22.04 installed and initialized" "OK"
     } else {
@@ -445,7 +458,7 @@ function Invoke-Phase2 {
     if ($octaExit -ne 0) {
         Set-Step "OctaSpace osn installed" "FAIL" "install.octa.space script exited $octaExit — see log for details"
         Write-Log "OctaSpace installation failed (exit $octaExit). Check the output above." "ERROR"
-        Show-Diagnostics; Wait-ForKey; exit 1
+        Upload-InstallLog "osn_install_failed"; Show-Diagnostics; Wait-ForKey; exit 1
     }
     Write-Log "OctaSpace osn install complete" "OK"
     Set-Step "OctaSpace osn installed" "PASS"
@@ -838,6 +851,7 @@ trap {
     Write-Host ""
     Write-Host "  [ERROR] An unexpected error stopped the installer:" -ForegroundColor Red
     Write-Host "  $_" -ForegroundColor Red
+    Upload-InstallLog "unexpected_error"
     Show-Diagnostics
     Read-Host "  Press Enter to close this window"
     exit 1

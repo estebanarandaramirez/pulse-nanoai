@@ -25,6 +25,7 @@ import AdminPayouts from './pages/AdminPayouts';
 import TreasuryManagement from './pages/TreasuryManagement';
 import CreateProfile from './pages/CreateProfile';
 import Leaderboard from './pages/Leaderboard';
+import InstallReports from './pages/InstallReports';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -67,6 +68,7 @@ const AuthenticatedApp = () => {
       <Route path="/admin" element={<AppLayout><Admin /></AppLayout>} />
       <Route path="/admin/payouts" element={<AppLayout><AdminPayouts /></AppLayout>} />
       <Route path="/admin/treasury" element={<AppLayout><TreasuryManagement /></AppLayout>} />
+      <Route path="/admin/install-reports" element={<AppLayout><InstallReports /></AppLayout>} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );

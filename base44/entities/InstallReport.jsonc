@@ -1,0 +1,41 @@
+{
+  "name": "InstallReport",
+  "type": "object",
+  "properties": {
+    "user_email": {
+      "type": "string",
+      "description": "Email of the user whose installer failed (resolved from auth token, or 'unknown')"
+    },
+    "platform": {
+      "type": "string",
+      "description": "clore | octaspace"
+    },
+    "error_step": {
+      "type": "string",
+      "description": "Identifier for which step of the installer failed"
+    },
+    "log_content": {
+      "type": "string",
+      "description": "Full contents of the installer log file at the time of failure"
+    },
+    "installer_version": {
+      "type": "string",
+      "description": "Optional version tag embedded in the installer"
+    },
+    "status": {
+      "type": "string",
+      "description": "new | reviewed | resolved"
+    },
+    "admin_notes": {
+      "type": "string",
+      "description": "Admin notes on the issue"
+    }
+  },
+  "required": ["platform", "error_step"],
+  "rls": {
+    "create": true,
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}
