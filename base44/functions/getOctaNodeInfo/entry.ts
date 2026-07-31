@@ -152,6 +152,51 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Scrape /hosting/sessions — actual session income for today (UTC) ────────
+    // OctaSpace keeps showing the last session's income_24h even when idle.
+    // Session rows are the only reliable source of what was actually earned today.
+    let todayIncomeOcta = 0;
+    let sessionsScraped = false;
+    const todayUtc = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    try {
+      const sessRes = await fetch(`${CUBE_BASE}/hosting/sessions`, {
+        redirect: 'follow',
+        headers: { ...hdrs, 'Cookie': jar.toString() },
+      });
+      jar.ingest(sessRes.headers);
+      const sessHtml = await sessRes.text();
+
+      const rowPat = /<tr[\s\S]*?<\/tr>/gi;
+      let sm: RegExpExecArray | null;
+      while ((sm = rowPat.exec(sessHtml)) !== null) {
+        const r = sm[0];
+        // Both Started and Finished appear as "YYYY-MM-DD HH:MM" — second one is Finished
+        const dates = [...r.matchAll(/(\d{4}-\d{2}-\d{2})\s+\d{2}:\d{2}/g)];
+        if (dates.length < 2) continue;
+        const finishedDate = dates[1][1];
+        if (finishedDate !== todayUtc) continue;
+        // Amount column: large decimal (OCTA) distinguishable from traffic/duration
+        const amtMatch = r.match(/>(\d+\.\d{4,})</);
+        if (!amtMatch) continue;
+        todayIncomeOcta += parseFloat(amtMatch[1]);
+      }
+      sessionsScraped = true;
+    } catch { /* non-fatal — fall back to node income_24h_usd in caller */ }
+
+    // Fetch OCTA/USD price to convert session OCTA amounts to USD
+    let octaPriceUsd = 0;
+    if (sessionsScraped && todayIncomeOcta > 0) {
+      try {
+        const priceRes = await fetch(
+          'https://api.coingecko.com/api/v3/simple/price?ids=octaspace&vs_currencies=usd',
+          { headers: { Accept: 'application/json' } },
+        );
+        const priceData = await priceRes.json();
+        octaPriceUsd = priceData?.octaspace?.usd ?? 0;
+      } catch { /* price stays 0 — todayIncomeUsd will be 0 */ }
+    }
+    const todaySessionsIncomeUsd = parseFloat((todayIncomeOcta * octaPriceUsd).toFixed(4));
+
     // ── For each node: scrape config page for current rate/hr ───────────────────
     for (const node of nodes) {
       try {
@@ -178,7 +223,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    return Response.json({ success: true, nodes, scraped_from: listRes.url });
+    return Response.json({
+      success: true,
+      nodes,
+      scraped_from: listRes.url,
+      today_sessions_income_usd: todaySessionsIncomeUsd,
+      today_sessions_income_octa: todayIncomeOcta,
+      sessions_scraped: sessionsScraped,
+      sessions_date: todayUtc,
+    });
   } catch (err: any) {
     return Response.json({ success: false, message: `Error: ${err.message}` }, { status: 500 });
   }

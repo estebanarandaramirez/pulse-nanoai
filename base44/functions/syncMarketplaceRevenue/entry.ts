@@ -36,15 +36,35 @@ Deno.serve(async (req) => {
 
   if (ENABLED.octaspace) {
     try {
-      // getOctaNodeInfo scrapes the cube.octa.computer portal — the only reliable
-      // source of 24h income. The REST API (fetchOctaspaceEarnings) doesn't expose
-      // per-node daily income fields, so total_income_24h_usd is always 0 there.
+      // getOctaNodeInfo scrapes cube.octa.computer for both node status and
+      // today's completed sessions. We use today_sessions_income_usd (sum of
+      // sessions that finished today UTC) rather than node income_24h_usd, because
+      // OctaSpace keeps showing the last session's income even when the node is
+      // idle for days — causing double-counting on subsequent sync runs.
       const res = await base44.asServiceRole.functions.invoke('getOctaNodeInfo', {});
-      const nodes = res.data?.nodes ?? [];
-      octa24hUsd = parseFloat(
-        nodes.reduce((s: number, n: any) => s + (parseFloat(n.income_24h_usd) || 0), 0).toFixed(4)
-      );
-      breakdown.octaspace_usd = octa24hUsd;
+
+      if (res.data?.sessions_scraped) {
+        // Reliable: use actual sessions that completed today
+        octa24hUsd = parseFloat((res.data.today_sessions_income_usd ?? 0).toFixed(4));
+        breakdown.octaspace_usd = octa24hUsd;
+        breakdown.octaspace_note = `session-based (${res.data.today_sessions_income_octa ?? 0} OCTA in completed sessions today)`;
+      } else {
+        // Session scraping unavailable — fall back to node income_24h_usd but
+        // only if at least one node is currently busy (actively rented).
+        // If all nodes are idle the figure is stale from a previous session.
+        const nodes = res.data?.nodes ?? [];
+        const anyBusy = nodes.some((n: any) => n.availability === 'busy');
+        if (anyBusy) {
+          octa24hUsd = parseFloat(
+            nodes.reduce((s: number, n: any) => s + (parseFloat(n.income_24h_usd) || 0), 0).toFixed(4)
+          );
+          breakdown.octaspace_note = 'fallback: node income_24h (node busy, sessions unavailable)';
+        } else {
+          octa24hUsd = 0;
+          breakdown.octaspace_note = 'fallback: skipped (all nodes idle, sessions unavailable — stale income_24h suppressed)';
+        }
+        breakdown.octaspace_usd = octa24hUsd;
+      }
     } catch (e: any) {
       console.error('OctaSpace sync failed:', e.message);
       breakdown.octaspace_usd = 0;
