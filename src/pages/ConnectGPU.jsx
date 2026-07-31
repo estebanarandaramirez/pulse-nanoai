@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Download, ExternalLink, LayoutDashboard } from "lucide-react";
+import { Copy, Download, LayoutDashboard } from "lucide-react";
 import SectionTitle from "../components/shared/SectionTitle";
 
 const STEPS = ["Download Installer", "Run Installer", "Now Earning"];
@@ -32,7 +32,6 @@ const PLATFORMS = [
     description: "Docker-based OSN node. Different job types, decentralised network.",
     ports: "TCP/UDP 51800-51816, TCP 18888",
     filename: "pulse-octa-setup.bat",
-    extraNote: "After install you'll register your node at cube.octa.computer",
   },
 ];
 
@@ -269,12 +268,6 @@ export default function ConnectGPU() {
           The installer handles everything — GPU detection, service setup, and registration with the Pulse network.
           Once it completes, your GPU will appear automatically on your home page.
         </p>
-        {selectedPlatform === "octaspace" && (
-          <div className="mt-3 flex items-start gap-2 text-[11px] font-mono text-purple">
-            <ExternalLink className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-            One manual step: register your node token at cube.octa.computer → Hosting → Nodes → Add Node
-          </div>
-        )}
         <div className="mt-5">
           <a href="/dashboard"
             className={`inline-flex items-center gap-2 px-5 py-2.5 border rounded-md text-[11px] font-mono transition-all
