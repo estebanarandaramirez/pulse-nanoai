@@ -15,7 +15,6 @@
     }
   },
   "required": [
-    "role",
-    "solana_wallet"
+    "role"
   ]
 }
