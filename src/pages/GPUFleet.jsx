@@ -5,7 +5,7 @@ import StatCard from "../components/shared/StatCard";
 import StatusTag from "../components/shared/StatusTag";
 import { Activity, DollarSign, Cpu } from "lucide-react";
 
-const STATUS_FILTER = ["all", "active", "busy", "idle", "offline", "maintenance"];
+const STATUS_FILTER = ["all", "active", "offline", "maintenance"];
 
 export default function GPUFleet() {
   const [gpus, setGpus] = useState([]);
@@ -71,18 +71,14 @@ export default function GPUFleet() {
 
   useEffect(() => { load(); }, []);
 
-  // Effective status: live platform availability > GPU record status
-  const getStatus = (g) => platformStatus[g.gpu_id] ?? g.status;
+  const filtered = gpus.filter(g =>
+    (statusFilter === "all" || g.status === statusFilter) &&
+    ((g.gpu_id ?? "").toLowerCase().includes(search.toLowerCase()) ||
+     (g.model ?? "").toLowerCase().includes(search.toLowerCase()) ||
+     (g.user_email ?? "").toLowerCase().includes(search.toLowerCase()))
+  );
 
-  const filtered = gpus.filter(g => {
-    const st = getStatus(g);
-    return (statusFilter === "all" || st === statusFilter) &&
-      ((g.gpu_id ?? "").toLowerCase().includes(search.toLowerCase()) ||
-       (g.model ?? "").toLowerCase().includes(search.toLowerCase()) ||
-       (g.user_email ?? "").toLowerCase().includes(search.toLowerCase()));
-  });
-
-  const active = gpus.filter(g => ["active", "busy", "idle"].includes(getStatus(g))).length;
+  const active = gpus.filter(g => g.status === "active").length;
   const uniqueUsers = [...new Map(gpus.map(g => [g.user_email, g])).values()];
   const totalEarned = uniqueUsers.reduce((s, g) => s + (g.earnings_usd || 0), 0);
 
@@ -141,7 +137,7 @@ export default function GPUFleet() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
-                  {["GPU ID", "Model", "User", "Status", "Platform", "User Earned"].map(h => (
+                  {["GPU ID", "Model", "User", "Status", "Availability", "Platform", "User Earned"].map(h => (
                     <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
                   ))}
                 </tr>
@@ -152,8 +148,11 @@ export default function GPUFleet() {
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground max-w-[180px] truncate">{g.gpu_id}</td>
                     <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{g.model}</td>
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground max-w-[140px] truncate">{g.user_email || "—"}</td>
+                    <td className="px-4 py-2.5"><StatusTag status={g.status} /></td>
                     <td className="px-4 py-2.5">
-                      <StatusTag status={getStatus(g)} />
+                      {platformStatus[g.gpu_id]
+                        ? <StatusTag status={platformStatus[g.gpu_id]} />
+                        : <span className="text-[10px] font-mono text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{g.active_platform || "—"}</td>
                     <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.earnings_usd || 0).toFixed(2)}</td>
