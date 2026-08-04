@@ -5,22 +5,64 @@ import StatCard from "../components/shared/StatCard";
 import StatusTag from "../components/shared/StatusTag";
 import { Activity, DollarSign, Cpu } from "lucide-react";
 
-const STATUS_FILTER = ["all", "active", "idle", "offline", "maintenance"];
+const STATUS_FILTER = ["all", "active", "busy", "idle", "offline", "maintenance"];
 
 export default function GPUFleet() {
   const [gpus, setGpus] = useState([]);
+  const [platformStatus, setPlatformStatus] = useState({}); // { [gpu_id]: 'idle'|'busy'|'offline' }
+  const [platformLoading, setPlatformLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Fetch live idle/busy from OctaSpace + Clore after GPU list loads
+  const fetchPlatformStatus = async (loadedGpus) => {
+    setPlatformLoading(true);
+    try {
+      const [octaRes, cloreRes] = await Promise.allSettled([
+        base44.functions.invoke('getOctaNodeInfo', {}),
+        base44.functions.invoke('fetchCloreaiEarnings', {}),
+      ]);
+
+      const lookup = {};
+
+      // OctaSpace: gpu_id matches the node name exactly ("OCTA-NVIDIAGeForceRTX3090-AWZIVG")
+      if (octaRes.status === 'fulfilled') {
+        for (const node of octaRes.value.data?.nodes ?? []) {
+          lookup[node.name] = node.availability; // 'idle' | 'busy' | 'offline'
+        }
+      }
+
+      // Clore: match by GPU model (case-insensitive partial match)
+      if (cloreRes.status === 'fulfilled') {
+        for (const server of cloreRes.value.data?.server_list ?? []) {
+          const gpu = loadedGpus.find(g =>
+            g.active_platform === 'Clore.ai' &&
+            (g.model?.toLowerCase().includes(server.gpu_model?.toLowerCase()) ||
+             server.gpu_model?.toLowerCase().includes(g.model?.toLowerCase()))
+          );
+          if (gpu) lookup[gpu.gpu_id] = server.rented ? 'busy' : 'idle';
+        }
+      }
+
+      setPlatformStatus(lookup);
+    } catch { /* platform status stays empty */ }
+    setPlatformLoading(false);
+  };
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await base44.functions.invoke('getGPUFleet', {});
-      if (res.data.error) setError(res.data.error);
-      else setGpus(res.data.gpus || []);
+      if (res.data.error) {
+        setError(res.data.error);
+      } else {
+        const loadedGpus = res.data.gpus || [];
+        setGpus(loadedGpus);
+        fetchPlatformStatus(loadedGpus);
+      }
     } catch (e) {
       setError(`Error: ${e.message}`);
     }
@@ -29,30 +71,20 @@ export default function GPUFleet() {
 
   useEffect(() => { load(); }, []);
 
-  const filtered = gpus.filter(g =>
-    (statusFilter === "all" || g.status === statusFilter) &&
-    ((g.gpu_id ?? "").toLowerCase().includes(search.toLowerCase()) ||
-     (g.model ?? "").toLowerCase().includes(search.toLowerCase()) ||
-     (g.user_email ?? "").toLowerCase().includes(search.toLowerCase()))
-  );
+  // Effective status: live platform availability > GPU record status
+  const getStatus = (g) => platformStatus[g.gpu_id] ?? g.status;
 
-  const active = gpus.filter(g => g.status === "active").length;
-  const totalEarned = gpus.reduce((s, g) => {
-    // sum once per unique user to avoid double-counting (earnings_usd is per-user total)
-    return s;
-  }, 0);
-  // Deduplicated total: sum earnings_usd once per unique user_email
+  const filtered = gpus.filter(g => {
+    const st = getStatus(g);
+    return (statusFilter === "all" || st === statusFilter) &&
+      ((g.gpu_id ?? "").toLowerCase().includes(search.toLowerCase()) ||
+       (g.model ?? "").toLowerCase().includes(search.toLowerCase()) ||
+       (g.user_email ?? "").toLowerCase().includes(search.toLowerCase()));
+  });
+
+  const active = gpus.filter(g => ["active", "busy", "idle"].includes(getStatus(g))).length;
   const uniqueUsers = [...new Map(gpus.map(g => [g.user_email, g])).values()];
-  const totalEarnedDeduped = uniqueUsers.reduce((s, g) => s + (g.earnings_usd || 0), 0);
-
-  const heartbeatAge = (ts) => {
-    if (!ts) return "never";
-    const mins = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
-    if (mins < 2) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
-    return `${Math.round(mins / 1440)}d ago`;
-  };
+  const totalEarned = uniqueUsers.reduce((s, g) => s + (g.earnings_usd || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -60,6 +92,9 @@ export default function GPUFleet() {
         <div className="flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse-glow" />
           <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">GPU Fleet</h1>
+          {platformLoading && (
+            <span className="text-[9px] font-mono text-muted-foreground">fetching live status...</span>
+          )}
         </div>
         <button onClick={load} disabled={loading}
           className="p-1.5 border border-border rounded-md text-muted-foreground hover:text-cyan hover:border-cyan/50 transition-colors">
@@ -74,7 +109,7 @@ export default function GPUFleet() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <StatCard label="Active / Total" value={`${active} / ${gpus.length}`} color="accent" icon={Activity} />
         <StatCard label="Total Users" value={uniqueUsers.length.toString()} color="primary" icon={Cpu} />
-        <StatCard label="Total Earned (All Users)" value={`$${totalEarnedDeduped.toFixed(2)}`} color="amber" icon={DollarSign} />
+        <StatCard label="Total Earned (All Users)" value={`$${totalEarned.toFixed(2)}`} color="amber" icon={DollarSign} />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -106,7 +141,7 @@ export default function GPUFleet() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
-                  {["GPU ID", "Model", "User", "Status", "Rate/hr", "Platform", "Heartbeat", "User Earned"].map(h => (
+                  {["GPU ID", "Model", "User", "Status", "Platform", "User Earned"].map(h => (
                     <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
                   ))}
                 </tr>
@@ -117,12 +152,10 @@ export default function GPUFleet() {
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground max-w-[180px] truncate">{g.gpu_id}</td>
                     <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{g.model}</td>
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground max-w-[140px] truncate">{g.user_email || "—"}</td>
-                    <td className="px-4 py-2.5"><StatusTag status={g.status} /></td>
-                    <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">
-                      {g.rate_per_hour ? `$${Number(g.rate_per_hour).toFixed(3)}` : "—"}
+                    <td className="px-4 py-2.5">
+                      <StatusTag status={getStatus(g)} />
                     </td>
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{g.active_platform || "—"}</td>
-                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{heartbeatAge(g.last_heartbeat)}</td>
                     <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.earnings_usd || 0).toFixed(2)}</td>
                   </tr>
                 ))}

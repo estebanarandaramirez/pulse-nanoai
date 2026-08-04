@@ -5,6 +5,7 @@ export default function StatusTag({ status }) {
     healthy: { color: "text-neon-green border-neon-green/40 bg-neon-green/10", dot: "bg-neon-green" },
     completed: { color: "text-neon-green border-neon-green/40 bg-neon-green/10", dot: "bg-neon-green" },
     rented: { color: "text-neon-green border-neon-green/40 bg-neon-green/10", dot: "bg-neon-green" },
+    busy: { color: "text-cyan border-cyan/40 bg-cyan/10", dot: "bg-cyan" },
     idle: { color: "text-amber border-amber/40 bg-amber/10", dot: "bg-amber" },
     pending: { color: "text-amber border-amber/40 bg-amber/10", dot: "bg-amber" },
     warning: { color: "text-amber border-amber/40 bg-amber/10", dot: "bg-amber" },
