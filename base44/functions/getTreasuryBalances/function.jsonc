@@ -1,0 +1,4 @@
+{
+  "name": "getTreasuryBalances",
+  "entry": "entry.ts"
+}

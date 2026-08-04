@@ -17,8 +17,9 @@ const NAV_MAIN = [
   { label: "Profile", path: "/profile", icon: User },
 ];
 
+// Legacy admin pages — hidden until refactored (routes still exist, just no nav links)
+const SHOW_LEGACY_ADMIN_NAV = false;
 const NAV_ADMIN_SECTION = [
-  { label: "GPU Fleet", path: "/gpu-fleet", icon: Database },
   { label: "Simulation", path: "/simulation", icon: BarChart3 },
   { label: "GPU Health", path: "/gpu-health", icon: Activity },
   { label: "Analytics", path: "/analytics", icon: TrendingUp },
@@ -73,7 +74,7 @@ export default function AppLayout({ children }) {
           <NavItem key={item.path} item={item} active={location.pathname === item.path} onClick={() => setSidebarOpen(false)} />
         ))}
 
-        {user?.role === "admin" && (
+        {user?.role === "admin" && SHOW_LEGACY_ADMIN_NAV && (
           <>
             <div className="my-3 border-t border-sidebar-border" />
             <button
@@ -93,7 +94,7 @@ export default function AppLayout({ children }) {
           <>
             <div className="my-3 border-t border-sidebar-border" />
             <NavItem item={{ label: "Admin", path: "/admin", icon: ShieldAlert }} active={location.pathname === "/admin"} onClick={() => setSidebarOpen(false)} />
-            <NavItem item={{ label: "Payout Scheduler", path: "/admin/payouts", icon: Coins }} active={location.pathname === "/admin/payouts"} onClick={() => setSidebarOpen(false)} />
+            <NavItem item={{ label: "GPU Fleet", path: "/gpu-fleet", icon: Database }} active={location.pathname === "/gpu-fleet"} onClick={() => setSidebarOpen(false)} />
             <NavItem item={{ label: "Treasury", path: "/admin/treasury", icon: DollarSign }} active={location.pathname === "/admin/treasury"} onClick={() => setSidebarOpen(false)} />
             <NavItem item={{ label: "Install Reports", path: "/admin/install-reports", icon: FileWarning }} active={location.pathname === "/admin/install-reports"} onClick={() => setSidebarOpen(false)} />
           </>
