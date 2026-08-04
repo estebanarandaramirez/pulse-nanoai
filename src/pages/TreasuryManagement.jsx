@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { base44 } from "@/api/base44Client";
-import { ShieldAlert, RefreshCw, DollarSign, Coins, Droplets, TrendingUp, Wallet, Zap } from "lucide-react";
+import { ShieldAlert, RefreshCw, DollarSign, Coins, Droplets, TrendingUp, Wallet, Zap, Activity } from "lucide-react";
 import StatusTag from "../components/shared/StatusTag";
 import { format } from "date-fns";
 
@@ -67,6 +67,8 @@ export default function TreasuryManagement() {
 
   const fmt = (n, decimals = 4) =>
     n == null ? null : Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals });
+
+  const totalPLSClaimed = claims.filter(c => c.status === "confirmed").reduce((s, c) => s + (c.amount_pls || 0), 0);
 
   const sol   = balances?.sol;
   const pulse = balances?.pulse;
@@ -147,6 +149,24 @@ export default function TreasuryManagement() {
             Last fetched: {format(new Date(balances.fetched_at), "MMM d, HH:mm:ss")}
           </p>
         )}
+      </div>
+
+      {/* Payout stats */}
+      <div className="grid grid-cols-2 gap-3">
+        <BalanceCard
+          label="PULSE Claimed (Confirmed)"
+          value={loadingClaims ? "..." : `${(totalPLSClaimed / 1000).toFixed(1)}k PULSE`}
+          sub={`${claims.filter(c => c.status === "confirmed").length} confirmed transactions`}
+          color="cyan"
+          icon={Coins}
+        />
+        <BalanceCard
+          label="Total Claim Events"
+          value={loadingClaims ? "..." : claims.length.toString()}
+          sub="All-time across all users"
+          color="purple"
+          icon={Activity}
+        />
       </div>
 
       {/* Recent Claim Events */}
