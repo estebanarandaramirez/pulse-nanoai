@@ -12,6 +12,7 @@
  *   CLOREAI_API_KEY     — Clore.ai account API key
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { Wallet } from 'npm:ethers@6';
 
 const SOLANA_RPC       = Deno.env.get('SOLANA_RPC_URL') ?? 'https://solana-rpc.publicnode.com';
 const DISTRIBUTION_WALLET = '5aADoB6ietioCnJLGq9rT4bJ5iJ3hrodKjhjKEUfkHQc';
@@ -65,7 +66,14 @@ Deno.serve(async (req) => {
     return Response.json({ error: 'Admin only' }, { status: 403 });
   }
 
-  const octaWallet = Deno.env.get('OCTA_WALLET_ADDRESS');
+  // Derive EVM wallet address from private key stored in secrets
+  const evmPrivKey = Deno.env.get('EVM_TREASURY_PRIVATE_KEY');
+  let octaWallet: string | null = null;
+  if (evmPrivKey) {
+    try {
+      octaWallet = new Wallet(evmPrivKey.startsWith('0x') ? evmPrivKey : `0x${evmPrivKey}`).address;
+    } catch { /* invalid key format */ }
+  }
 
   const results = await Promise.allSettled([
     // ── SOL balance ───────────────────────────────────────────────────────────
@@ -82,7 +90,7 @@ Deno.serve(async (req) => {
 
     // ── OCTA balance (EVM wallet on OctaSpace network) ────────────────────────
     (async () => {
-      if (!octaWallet) return { balance_octa: null, balance_usd: 0, note: 'OCTA_WALLET_ADDRESS not set' };
+      if (!octaWallet) return { balance_octa: null, balance_usd: 0, note: 'EVM_TREASURY_PRIVATE_KEY not set or invalid' };
       const balanceOcta = await evmGetBalance(octaWallet);
       let octaPriceUsd = 0.09;
       try {
