@@ -125,15 +125,37 @@ export default function TreasuryManagement() {
           <span className="text-[9px] tracking-[2px] uppercase font-mono text-muted-foreground">Platform Treasury Wallets</span>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <BalanceCard
-            label="OctaSpace (OCTA)"
-            value={loadingBal ? "..." : octa?.balance_octa != null
-              ? `${fmt(octa.balance_octa, 4)} OCTA`
-              : (octa?.note ? "Not configured" : "Error")}
-            sub={octa?.balance_octa != null ? `≈ $${fmt(octa.balance_usd, 2)} USD @ $${octa?.octa_price_usd}/OCTA` : octa?.note ?? ""}
-            color="amber"
-            icon={TrendingUp}
-          />
+          <div className="bg-card border border-amber/30 text-amber rounded-md p-4 relative card-gradient-top">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[9px] tracking-[2px] uppercase font-mono text-muted-foreground">OctaSpace (OCTA)</span>
+              <TrendingUp className="w-3.5 h-3.5 text-amber" />
+            </div>
+            <div className="text-xl font-display font-bold tracking-tight text-amber">
+              {loadingBal ? "..." : octa?.balance_octa != null
+                ? `${fmt(octa.balance_octa, 4)} OCTA`
+                : (octa?.note ? "Not configured" : "Error")}
+            </div>
+            <div className="mt-1 text-[9px] font-mono text-muted-foreground truncate">
+              {octa?.balance_octa != null ? `≈ $${fmt(octa.balance_usd, 2)} USD @ $${octa?.octa_price_usd}/OCTA` : octa?.note ?? ""}
+            </div>
+            {/* Debug: show scraper output when balance is 0 */}
+            {!loadingBal && octa?._debug && octa.balance_octa === 0 && (
+              <details className="mt-2">
+                <summary className="text-[9px] font-mono text-amber/60 cursor-pointer hover:text-amber">debug snippets</summary>
+                <div className="mt-1 space-y-1 max-h-40 overflow-y-auto">
+                  {octa._debug.pages_checked && (
+                    <p className="text-[8px] font-mono text-muted-foreground">Pages: {octa._debug.pages_checked.join(', ')}</p>
+                  )}
+                  {(octa._debug.snippets ?? []).map((s, i) => (
+                    <p key={i} className="text-[8px] font-mono text-muted-foreground/70 break-all">{s}</p>
+                  ))}
+                  {(!octa._debug.snippets || octa._debug.snippets.length === 0) && (
+                    <p className="text-[8px] font-mono text-muted-foreground/70">No OCTA/balance keywords found in page HTML</p>
+                  )}
+                </div>
+              </details>
+            )}
+          </div>
           <BalanceCard
             label="Clore.ai (CLORE)"
             value={loadingBal ? "..." : clore?.balance_clore != null

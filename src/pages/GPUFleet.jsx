@@ -37,17 +37,21 @@ export default function GPUFleet() {
   );
 
   const active = gpus.filter(g => g.status === "active").length;
-  const totalEarned = gpus.reduce((s, g) => s + (g.total_earned_usd || 0), 0);
-  const avgUptime = gpus.length
-    ? (gpus.reduce((s, g) => s + (g.uptime_percent || 0), 0) / gpus.length).toFixed(1)
-    : 0;
+  const totalEarned = gpus.reduce((s, g) => {
+    // sum once per unique user to avoid double-counting (earnings_usd is per-user total)
+    return s;
+  }, 0);
+  // Deduplicated total: sum earnings_usd once per unique user_email
+  const uniqueUsers = [...new Map(gpus.map(g => [g.user_email, g])).values()];
+  const totalEarnedDeduped = uniqueUsers.reduce((s, g) => s + (g.earnings_usd || 0), 0);
 
   const heartbeatAge = (ts) => {
     if (!ts) return "never";
     const mins = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
     if (mins < 2) return "just now";
     if (mins < 60) return `${mins}m ago`;
-    return `${Math.round(mins / 60)}h ago`;
+    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
+    return `${Math.round(mins / 1440)}d ago`;
   };
 
   return (
@@ -56,7 +60,6 @@ export default function GPUFleet() {
         <div className="flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse-glow" />
           <h1 className="font-display font-bold text-xl tracking-[3px] uppercase text-foreground">GPU Fleet</h1>
-
         </div>
         <button onClick={load} disabled={loading}
           className="p-1.5 border border-border rounded-md text-muted-foreground hover:text-cyan hover:border-cyan/50 transition-colors">
@@ -70,8 +73,8 @@ export default function GPUFleet() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <StatCard label="Active / Total" value={`${active} / ${gpus.length}`} color="accent" icon={Activity} />
-        <StatCard label="Total Earned" value={`$${totalEarned.toFixed(2)}`} color="primary" icon={DollarSign} />
-        <StatCard label="Avg Uptime" value={`${avgUptime}%`} color="amber" icon={Cpu} />
+        <StatCard label="Total Users" value={uniqueUsers.length.toString()} color="primary" icon={Cpu} />
+        <StatCard label="Total Earned (All Users)" value={`$${totalEarnedDeduped.toFixed(2)}`} color="amber" icon={DollarSign} />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -96,14 +99,14 @@ export default function GPUFleet() {
           <div className="p-8 text-center text-[10px] font-mono text-muted-foreground">Loading fleet...</div>
         ) : filtered.length === 0 ? (
           <div className="p-8 text-center text-[10px] font-mono text-muted-foreground">
-            {gpus.length === 0 ? "No GPUs registered yet. Run the installer on a machine to get started." : "No GPUs match the current filter."}
+            {gpus.length === 0 ? "No GPUs registered yet." : "No GPUs match the current filter."}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
-                  {["GPU ID", "Model", "Status", "Rate/hr", "Uptime", "Platform", "Heartbeat", "Earned"].map(h => (
+                  {["GPU ID", "Model", "User", "Status", "Rate/hr", "Platform", "Heartbeat", "User Earned"].map(h => (
                     <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal">{h}</th>
                   ))}
                 </tr>
@@ -111,24 +114,16 @@ export default function GPUFleet() {
               <tbody>
                 {filtered.map(g => (
                   <tr key={g.gpu_id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{g.gpu_id}</td>
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground max-w-[180px] truncate">{g.gpu_id}</td>
                     <td className="px-4 py-2.5 text-[11px] font-mono text-foreground">{g.model}</td>
+                    <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground max-w-[140px] truncate">{g.user_email || "—"}</td>
                     <td className="px-4 py-2.5"><StatusTag status={g.status} /></td>
-                    <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">${(g.rate_per_hour || 0).toFixed(3)}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1 w-14 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full rounded-full" style={{
-                            width: `${g.uptime_percent || 0}%`,
-                            background: (g.uptime_percent || 0) > 90 ? "var(--neon-green)" : (g.uptime_percent || 0) > 70 ? "var(--amber)" : "var(--pulse-red)"
-                          }} />
-                        </div>
-                        <span className="text-[10px] font-mono text-muted-foreground">{g.uptime_percent || 0}%</span>
-                      </div>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-cyan">
+                      {g.rate_per_hour ? `$${Number(g.rate_per_hour).toFixed(3)}` : "—"}
                     </td>
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{g.active_platform || "—"}</td>
                     <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">{heartbeatAge(g.last_heartbeat)}</td>
-                    <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.total_earned_usd || 0).toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-[11px] font-mono text-neon-green">${(g.earnings_usd || 0).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

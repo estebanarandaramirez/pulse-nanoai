@@ -31,7 +31,7 @@ async function rpc(method: string, params: unknown[]): Promise<unknown> {
   return json.result;
 }
 
-// ── OctaSpace web login (same approach as getOctaNodeInfo) ─────────────────────
+// ── OctaSpace web login ────────────────────────────────────────────────────────
 class CookieJar {
   private jar = new Map<string, string>();
   ingest(headers: Headers): void {
@@ -85,36 +85,89 @@ async function octaSignIn(email: string, password: string) {
   return { jar, hdrs };
 }
 
-async function fetchOctaBalance(): Promise<{ balance_octa: number; octa_price_usd: number; balance_usd: number; note?: string }> {
-  const email = Deno.env.get('OCTASPACE_WEB_EMAIL');
+// Extract short snippets of text around keyword matches for debugging
+function extractSnippets(html: string, keywords: string[], maxPer = 2, radius = 120): string[] {
+  const snippets: string[] = [];
+  for (const kw of keywords) {
+    let idx = 0;
+    let found = 0;
+    while (found < maxPer) {
+      const pos = html.toLowerCase().indexOf(kw.toLowerCase(), idx);
+      if (pos < 0) break;
+      const raw = html.slice(Math.max(0, pos - radius), pos + radius + kw.length);
+      // Strip tags and collapse whitespace for readability
+      snippets.push(`[${kw}]: ${raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}`);
+      idx = pos + 1;
+      found++;
+    }
+  }
+  return snippets.slice(0, 8);
+}
+
+async function fetchOctaBalance(): Promise<{
+  balance_octa: number | null; octa_price_usd: number; balance_usd: number;
+  note?: string; _debug?: Record<string, unknown>;
+}> {
+  const email    = Deno.env.get('OCTASPACE_WEB_EMAIL');
   const password = Deno.env.get('OCTASPACE_WEB_PASSWORD');
-  if (!email || !password) return { balance_octa: 0, octa_price_usd: 0, balance_usd: 0, note: 'OCTASPACE_WEB_EMAIL / OCTASPACE_WEB_PASSWORD not set' };
+  if (!email || !password) {
+    return { balance_octa: null, octa_price_usd: 0, balance_usd: 0, note: 'OCTASPACE_WEB_EMAIL / OCTASPACE_WEB_PASSWORD not set' };
+  }
 
-  const { jar, hdrs } = await octaSignIn(email, password);
-
-  // Fetch the hosting dashboard — balance is shown in the page header/sidebar
-  const res = await fetch(`${CUBE_BASE}/hosting`, {
-    redirect: 'follow',
-    headers: { ...hdrs, 'Cookie': jar.toString() },
-  });
-  jar.ingest(res.headers);
-  const html = await res.text();
-
-  // Try multiple patterns for the OCTA balance amount.
-  // OctaSpace uses the Ø symbol for OCTA in income rows; the wallet balance
-  // is typically shown as a plain decimal near "balance", "withdraw", or "wallet".
+  let loginOk = false;
+  let debugSnippets: string[] = [];
   let balanceOcta = 0;
-  const patterns = [
-    // e.g. "Balance: 12.3456 Ø" or "12.3456 OCTA"
-    /[Bb]alance[\s\S]{0,200}?([\d]+\.[\d]+)\s*(?:Ø|OCTA)/,
-    /[Ww]allet[\s\S]{0,200}?([\d]+\.[\d]+)\s*(?:Ø|OCTA)/,
-    /[Ww]ithdraw[\s\S]{0,200}?([\d]+\.[\d]+)\s*(?:Ø|OCTA)/,
-    // Fallback: any decimal followed by OCTA/Ø not on a row with "/" (that would be income_24h)
-    /([\d]+\.[\d]{4,})\s*(?:Ø|OCTA)/,
-  ];
-  for (const pat of patterns) {
-    const m = html.match(pat);
-    if (m) { balanceOcta = parseFloat(m[1]); break; }
+  let pagesChecked: string[] = [];
+
+  try {
+    const { jar, hdrs } = await octaSignIn(email, password);
+    loginOk = true;
+
+    // Try multiple pages that might show the account balance
+    const pagePaths = ['/hosting', '/hosting/nodes', '/hosting/sessions'];
+
+    for (const path of pagePaths) {
+      try {
+        const res = await fetch(`${CUBE_BASE}${path}`, {
+          redirect: 'follow',
+          headers: { ...hdrs, 'Cookie': jar.toString() },
+        });
+        jar.ingest(res.headers);
+        if (!res.ok) continue;
+        const html = await res.text();
+        pagesChecked.push(`${path}(${html.length}b)`);
+
+        // Collect debug snippets from the first page that loads OK
+        if (debugSnippets.length === 0) {
+          debugSnippets = extractSnippets(html, ['alance', 'wallet', 'withdraw', 'OCTA', 'Ø', 'balance']);
+        }
+
+        // ── Pattern battery ────────────────────────────────────────────────────
+        const patterns: RegExp[] = [
+          // JSON-like: "balance": 5.123 or balance: 5.123
+          /"(?:balance|hosting_balance|available|withdrawable)"\s*:\s*([\d]+\.[\d]+)/i,
+          /\bbalance\s*:\s*([\d]+\.[\d]+)/i,
+          // HTML near balance/wallet/withdraw keyword
+          /(?:balance|wallet|withdraw)[^<>]{0,150}?([\d]+\.[\d]+)\s*(?:Ø|OCTA)/is,
+          // OCTA/Ø amount anywhere (use exact chars from getOctaNodeInfo: Ø U+00D8 and ﾘ or similar)
+          /([\d]+\.[\d]+)\s*(?:OCTA|Ø)/,
+          // Any decimal >= 4 digits (likely not a price/rate) near OCTA symbol
+          /([\d]{1,6}\.[\d]{2,})\s*[ØÐ]/,
+        ];
+
+        for (const pat of patterns) {
+          const m = html.match(pat);
+          if (m) {
+            const candidate = parseFloat(m[1]);
+            if (candidate > 0) { balanceOcta = candidate; break; }
+          }
+        }
+
+        if (balanceOcta > 0) break;
+      } catch { /* try next page */ }
+    }
+  } catch (e: any) {
+    return { balance_octa: null, octa_price_usd: 0, balance_usd: 0, note: `Login failed: ${e.message}` };
   }
 
   // OCTA price from CoinGecko
@@ -129,6 +182,12 @@ async function fetchOctaBalance(): Promise<{ balance_octa: number; octa_price_us
     balance_octa: balanceOcta,
     octa_price_usd: octaPriceUsd,
     balance_usd: parseFloat((balanceOcta * octaPriceUsd).toFixed(2)),
+    _debug: {
+      login_ok: loginOk,
+      pages_checked: pagesChecked,
+      balance_found: balanceOcta,
+      snippets: debugSnippets,
+    },
   };
 }
 
@@ -173,7 +232,7 @@ Deno.serve(async (req) => {
     // ── Clore.ai account balance ──────────────────────────────────────────────
     (async () => {
       const apiKey = Deno.env.get('CLOREAI_API_KEY');
-      if (!apiKey) return { balance_clore: 0, balance_usd: 0, note: 'CLOREAI_API_KEY not set' };
+      if (!apiKey) return { balance_clore: null, balance_usd: 0, note: 'CLOREAI_API_KEY not set' };
       const r = await safeFetch(`${CLORE_BASE}/balance`, { 'auth': apiKey });
       if (!r.ok) return { balance_clore: 0, balance_usd: 0 };
       const data = tryParse(r.text);
