@@ -33,15 +33,11 @@ Deno.serve(async (req) => {
       earnByUser[email] = (earnByUser[email] ?? 0) + (parseFloat((log as any).total_usd) || 0);
     }
 
+    // Spread all GPU columns so callers (e.g. Dashboard isLinked check on
+    // platform_node_id / node_id) still receive every field from Supabase.
+    // earnings_usd overrides the stale total_earned_usd on the record.
     const gpus = (data ?? []).map((g: any) => ({
-      gpu_id:          g.gpu_id,
-      model:           g.model,
-      user_email:      g.user_email,
-      status:          g.status,
-      active_platform: g.active_platform,
-      last_heartbeat:  g.last_heartbeat,
-      rate_per_hour:   g.rate_per_hour,
-      // earnings_usd = sum of all EarningsLog rows for this GPU's owner
+      ...g,
       earnings_usd: parseFloat((earnByUser[g.user_email] ?? 0).toFixed(2)),
     }));
 
