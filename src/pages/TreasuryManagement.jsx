@@ -138,20 +138,14 @@ export default function TreasuryManagement() {
             <div className="mt-1 text-[9px] font-mono text-muted-foreground truncate">
               {octa?.balance_octa != null ? `≈ $${fmt(octa.balance_usd, 2)} USD @ $${octa?.octa_price_usd}/OCTA` : octa?.note ?? ""}
             </div>
-            {/* Debug: show scraper output when balance is 0 */}
-            {!loadingBal && octa?._debug && octa.balance_octa === 0 && (
+            {/* Debug: show scraper log when balance is 0 */}
+            {!loadingBal && octa?._debug && (octa.balance_octa === 0 || octa.balance_octa == null) && (
               <details className="mt-2">
-                <summary className="text-[9px] font-mono text-amber/60 cursor-pointer hover:text-amber">debug snippets</summary>
-                <div className="mt-1 space-y-1 max-h-40 overflow-y-auto">
-                  {octa._debug.pages_checked && (
-                    <p className="text-[8px] font-mono text-muted-foreground">Pages: {octa._debug.pages_checked.join(', ')}</p>
-                  )}
-                  {(octa._debug.snippets ?? []).map((s, i) => (
+                <summary className="text-[9px] font-mono text-amber/60 cursor-pointer hover:text-amber">debug log</summary>
+                <div className="mt-1 space-y-0.5 max-h-48 overflow-y-auto">
+                  {(octa._debug.log ?? []).map((s, i) => (
                     <p key={i} className="text-[8px] font-mono text-muted-foreground/70 break-all">{s}</p>
                   ))}
-                  {(!octa._debug.snippets || octa._debug.snippets.length === 0) && (
-                    <p className="text-[8px] font-mono text-muted-foreground/70">No OCTA/balance keywords found in page HTML</p>
-                  )}
                 </div>
               </details>
             )}

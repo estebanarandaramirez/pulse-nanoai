@@ -114,57 +114,96 @@ async function fetchOctaBalance(): Promise<{
     return { balance_octa: null, octa_price_usd: 0, balance_usd: 0, note: 'OCTASPACE_WEB_EMAIL / OCTASPACE_WEB_PASSWORD not set' };
   }
 
-  let loginOk = false;
-  let debugSnippets: string[] = [];
   let balanceOcta = 0;
-  let pagesChecked: string[] = [];
+  const debugLog: string[] = [];
 
   try {
     const { jar, hdrs } = await octaSignIn(email, password);
-    loginOk = true;
+    debugLog.push('login: ok');
 
-    // Try multiple pages that might show the account balance
-    const pagePaths = ['/hosting', '/hosting/nodes', '/hosting/sessions'];
+    const sessionHdrs = { ...hdrs, 'Cookie': jar.toString(), 'Accept': 'application/json, text/html, */*' };
 
-    for (const path of pagePaths) {
-      try {
-        const res = await fetch(`${CUBE_BASE}${path}`, {
-          redirect: 'follow',
-          headers: { ...hdrs, 'Cookie': jar.toString() },
-        });
-        jar.ingest(res.headers);
-        if (!res.ok) continue;
-        const html = await res.text();
-        pagesChecked.push(`${path}(${html.length}b)`);
+    // ── Step 1: fetch /hosting/nodes and extract balance_controller.js URL ────
+    const nodesRes = await fetch(`${CUBE_BASE}/hosting/nodes`, { redirect: 'follow', headers: sessionHdrs });
+    jar.ingest(nodesRes.headers);
+    const nodesHtml = await nodesRes.text();
+    debugLog.push(`/hosting/nodes: ${nodesHtml.length}b`);
 
-        // Collect debug snippets from the first page that loads OK
-        if (debugSnippets.length === 0) {
-          debugSnippets = extractSnippets(html, ['alance', 'wallet', 'withdraw', 'OCTA', 'Ø', 'balance']);
+    // The importmap in the HTML maps module names → hashed asset paths.
+    // Extract the balance_controller path so we can read the JS and find what URL it calls.
+    const importmapMatch = nodesHtml.match(/"controllers\/balance_controller"\s*:\s*"([^"]+)"/);
+    if (importmapMatch) {
+      const jsPath = importmapMatch[1]; // e.g. /assets/controllers/balance_controller-abc123.js
+      debugLog.push(`balance_controller.js: ${jsPath}`);
+
+      // Fetch the public JS asset (no auth required for static assets)
+      const jsRes = await fetch(`${CUBE_BASE}${jsPath}`);
+      if (jsRes.ok) {
+        const jsText = await jsRes.text();
+        debugLog.push(`js size: ${jsText.length}b`);
+
+        // Mine URL string literals from the minified JS.
+        // Look for paths that contain "balance" or "wallet".
+        const urlStrings = new Set<string>();
+        for (const m of jsText.matchAll(/["'`](\/[a-z0-9_/.-]{3,80})["'`]/g)) {
+          const p = m[1];
+          if (/balance|wallet|account/i.test(p)) urlStrings.add(p);
         }
+        debugLog.push(`JS url candidates: ${[...urlStrings].join(', ')}`);
 
-        // ── Pattern battery ────────────────────────────────────────────────────
-        const patterns: RegExp[] = [
-          // JSON-like: "balance": 5.123 or balance: 5.123
-          /"(?:balance|hosting_balance|available|withdrawable)"\s*:\s*([\d]+\.[\d]+)/i,
-          /\bbalance\s*:\s*([\d]+\.[\d]+)/i,
-          // HTML near balance/wallet/withdraw keyword
-          /(?:balance|wallet|withdraw)[^<>]{0,150}?([\d]+\.[\d]+)\s*(?:Ø|OCTA)/is,
-          // OCTA/Ø amount anywhere (use exact chars from getOctaNodeInfo: Ø U+00D8 and ﾘ or similar)
-          /([\d]+\.[\d]+)\s*(?:OCTA|Ø)/,
-          // Any decimal >= 4 digits (likely not a price/rate) near OCTA symbol
-          /([\d]{1,6}\.[\d]{2,})\s*[ØÐ]/,
-        ];
+        // Try each found URL with the authenticated session
+        for (const path of urlStrings) {
+          try {
+            const r = await fetch(`${CUBE_BASE}${path}`, {
+              redirect: 'follow',
+              headers: { ...sessionHdrs, 'Accept': 'application/json' },
+            });
+            jar.ingest(r.headers);
+            if (!r.ok) { debugLog.push(`${path}: ${r.status}`); continue; }
+            const ct = r.headers.get('content-type') ?? '';
+            const body = await r.text();
+            debugLog.push(`${path}: ${r.status} ${ct} ${body.slice(0, 120)}`);
+            if (ct.includes('json')) {
+              const data = JSON.parse(body);
+              const candidate = data.balance ?? data.amount ?? data.octa ?? data.octa_balance ?? data.value;
+              if (candidate != null) {
+                balanceOcta = parseFloat(candidate) || 0;
+                if (balanceOcta > 0) break;
+              }
+            }
+          } catch (e: any) { debugLog.push(`${path}: err ${e.message}`); }
+        }
+      }
+    }
 
-        for (const pat of patterns) {
-          const m = html.match(pat);
-          if (m) {
-            const candidate = parseFloat(m[1]);
-            if (candidate > 0) { balanceOcta = candidate; break; }
+    // ── Step 2: Try common endpoint guesses if still 0 ────────────────────────
+    if (balanceOcta === 0) {
+      const guesses = [
+        '/hosting/balance', '/hosting/balance.json',
+        '/hosting/wallet', '/hosting/wallet.json',
+        '/hosting/accounts/balance', '/hosting/accounts/balance.json',
+        '/api/v1/hosting/balance', '/api/v1/accounts/balance',
+      ];
+      for (const path of guesses) {
+        try {
+          const r = await fetch(`${CUBE_BASE}${path}`, {
+            redirect: 'follow',
+            headers: { ...sessionHdrs, 'Accept': 'application/json' },
+          });
+          jar.ingest(r.headers);
+          const ct = r.headers.get('content-type') ?? '';
+          const body = await r.text();
+          debugLog.push(`guess ${path}: ${r.status} ${body.slice(0, 100)}`);
+          if (r.ok && ct.includes('json')) {
+            const data = JSON.parse(body);
+            const candidate = data.balance ?? data.amount ?? data.octa ?? data.value;
+            if (candidate != null) {
+              balanceOcta = parseFloat(candidate) || 0;
+              if (balanceOcta > 0) break;
+            }
           }
-        }
-
-        if (balanceOcta > 0) break;
-      } catch { /* try next page */ }
+        } catch { /* continue */ }
+      }
     }
   } catch (e: any) {
     return { balance_octa: null, octa_price_usd: 0, balance_usd: 0, note: `Login failed: ${e.message}` };
@@ -182,12 +221,7 @@ async function fetchOctaBalance(): Promise<{
     balance_octa: balanceOcta,
     octa_price_usd: octaPriceUsd,
     balance_usd: parseFloat((balanceOcta * octaPriceUsd).toFixed(2)),
-    _debug: {
-      login_ok: loginOk,
-      pages_checked: pagesChecked,
-      balance_found: balanceOcta,
-      snippets: debugSnippets,
-    },
+    _debug: { log: debugLog },
   };
 }
 
