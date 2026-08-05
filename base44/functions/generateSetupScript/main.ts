@@ -7,8 +7,9 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// The fleet token is stored as a secret (shared across all machines)
+// Secrets embedded into the generated installer at download time
 const CLOREAI_FLEET_TOKEN = Deno.env.get('CLOREAI_FLEET_TOKEN') ?? '';
+const CLOREAI_API_KEY     = Deno.env.get('CLOREAI_API_KEY') ?? '';
 const OCTASPACE_API_KEY   = Deno.env.get('OCTASPACE_API_KEY') ?? '';
 
 // ── Clore.ai PS1 ─────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ const CLORE_PS1 = `#Requires -Version 5.1
 $PULSE_USER_TOKEN    = "{{PULSE_USER_TOKEN}}"
 $PULSE_APP_ID        = "{{PULSE_APP_ID}}"
 $CLOREAI_FLEET_TOKEN = "{{CLOREAI_FLEET_TOKEN}}"
+$CLOREAI_API_KEY     = "{{CLOREAI_API_KEY}}"
 $PULSE_API_BASE     = "https://api.base44.app/api/apps/$PULSE_APP_ID/functions"
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -308,95 +310,93 @@ function Invoke-Phase2 {
         else { Write-Log "NVIDIA GPU not yet visible in WSL2 — ensure Windows NVIDIA driver is up to date" "WARN" }
     }
 
-    Write-Log "Installing build tools..."
-    wsl -d Ubuntu-22.04 --user root -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>&1 | tail -1 && apt-get install -y -qq build-essential python3-dev python3-pip 2>&1 | tail -2" 2>&1 | ForEach-Object { Write-Log $_ }
-
-    Write-Log "Installing Clore.ai host client..."
-    $cloreAlready = (wsl -d Ubuntu-22.04 --user root -- bash -c "[ -f /etc/systemd/system/clore-hosting.service ] && echo yes || echo no" 2>&1 | Out-String) -match "yes"
-    if ($cloreAlready) {
-        Write-Log "Clore.ai host client already installed" "OK"
-    } else {
-        # Remove any partial /opt/clore-hosting so install.sh sees a clean slate
-        wsl -d Ubuntu-22.04 --user root -- bash -c "rm -rf /opt/clore-hosting 2>/dev/null; true"
-        $cloreOutput = wsl -d Ubuntu-22.04 --user root -- bash -c "bash <(curl -fsSL https://gitlab.com/cloreai-public/hosting/-/raw/main/install.sh)" 2>&1
-        $cloreExit = $LASTEXITCODE
-        $cloreOutput | ForEach-Object { Write-Log $_ }
-        if ($cloreExit -ne 0) {
-            Write-Log "Clore.ai installation failed (exit $cloreExit)." "ERROR"
-            Upload-InstallLog "cloreai_install_failed"
-            Wait-ForKey; exit 1
-        }
-        Write-Log "Clore.ai install complete" "OK"
-    }
-
     Write-Log "Capping NVIDIA HugePages at 256 (512MB) to prevent RAM starvation..."
     wsl -d Ubuntu-22.04 --user root -- bash -c "echo vm.nr_hugepages=256 > /etc/sysctl.d/90-wsl.conf && sysctl -p /etc/sysctl.d/90-wsl.conf" 2>&1 | ForEach-Object { Write-Log $_ }
     Write-Log "HugePages capped — NVIDIA driver limited to 512MB kernel pages" "OK"
 
-    # Decode fleet token and write onboarding.json
-    Write-Log "Decoding Clore fleet token..."
-    try {
-        $ftPad = 4 - ($CLOREAI_FLEET_TOKEN.Length % 4)
-        $ftPadded = if ($ftPad -ne 4) { $CLOREAI_FLEET_TOKEN + ("=" * $ftPad) } else { $CLOREAI_FLEET_TOKEN }
-        $fleetCfg = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ftPadded)) | ConvertFrom-Json
-    } catch {
-        Write-Log "Fleet token decode failed: $_" "ERROR"
-        Upload-InstallLog "fleet_token_decode_failed"
-        Wait-ForKey; exit 1
-    }
-
-    $onboardingObj = [ordered]@{ auth = $fleetCfg.auth; mrl = $fleetCfg.mrl }
-    foreach ($k in @("on_demand_bitcoin","on_demand_clore","spot_bitcoin","spot_clore","on_demand_usd_blockchain","spot_usd_blockchain","keep_params")) {
-        if ($null -ne $fleetCfg.$k) { $onboardingObj[$k] = $fleetCfg.$k }
-    }
-    $onboardingJson = ($onboardingObj | ConvertTo-Json -Depth 2) -replace "\`r\`n", "\`n"
-    wsl -d Ubuntu-22.04 --user root -- bash -c "mkdir -p /opt/clore-hosting /opt/clore-onboarding"
-    $onboardingB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($onboardingJson))
-    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$onboardingB64' | base64 -d | tee /opt/clore-hosting/onboarding.json /opt/clore-onboarding/onboarding.json > /dev/null"
-    Write-Log "onboarding.json written" "OK"
-
-    # Install clore-onboarding service
-    # Fix: nvidia-smi lives in /usr/lib/wsl/lib/ which is NOT in systemd service PATH,
-    # so clore_onboarding.py (which calls nvidia-smi to detect GPU) always crashed.
-    # Symlinking into /usr/local/bin/ makes it accessible to all services.
-    $setupOnboarding = @'
-rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] && NV=$(find /usr/lib/wsl -name nvidia-smi 2>/dev/null | head -1); [ -f "$NV" ] && ln -sf "$NV" /usr/local/bin/nvidia-smi && echo 'nvidia-smi symlinked OK' || echo 'WARNING: nvidia-smi not found'; pip3 install -q requests 2>&1 | tail -1; mkdir -p /opt/clore-onboarding; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/clore_onboarding.py/raw?ref=main' -o /opt/clore-onboarding/clore_onboarding.py || { echo 'ERROR: clore_onboarding.py download failed'; exit 1; }; curl -fsSL 'https://gitlab.com/api/v4/projects/cloreai-public%2Fonboarding/repository/files/specs.py/raw?ref=main' -o /opt/clore-onboarding/specs.py || { echo 'ERROR: specs.py download failed'; exit 1; }; printf '[Unit]\nDescription=Clore Fleet Onboarding Service\n\n[Service]\nType=simple\nWorkingDirectory=/opt/clore-onboarding\nExecStart=/usr/bin/python3 /opt/clore-onboarding/clore_onboarding.py --mode linux\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/clore-onboarding.service; update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true; update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true; mkdir -p /etc/docker; echo eyJpcHRhYmxlcyI6ZmFsc2UsImRlZmF1bHQtcnVudGltZSI6Im52aWRpYSIsInJ1bnRpbWVzIjp7Im52aWRpYSI6eyJwYXRoIjoibnZpZGlhLWNvbnRhaW5lci1ydW50aW1lIiwicnVudGltZUFyZ3MiOltdfX19 | base64 -d > /etc/docker/daemon.json; echo br_netfilter > /etc/modules-load.d/clore.conf; modprobe br_netfilter 2>/dev/null || true; systemctl restart docker 2>/dev/null || true; docker network prune -f 2>/dev/null; true; printf '#!/bin/bash\nuntil curl -sf --max-time 5 https://api.clore.ai/server-config.json > /dev/null 2>&1; do\n    echo "$(date) | Waiting for network (api.clore.ai not reachable)..."\n    sleep 5\ndone\necho "$(date) | Network ready, starting hosting.py"\n\ncd /opt/clore-hosting/hosting\nwhile true; do\n    setsid -w /opt/clore-hosting/.miniconda-env/bin/python3 hosting.py --service\n    echo "hosting.py restarting in 5s..."\n    sleep 5\ndone\n' > /opt/clore-hosting/pulse-hosting-loop.sh; chmod +x /opt/clore-hosting/pulse-hosting-loop.sh; mkdir -p /etc/systemd/system/clore-hosting.service.d; printf '[Unit]\nAfter=docker.service\n\n[Service]\nEnvironment="PYTHONUNBUFFERED=1"\nEnvironment="PATH=/opt/clore-hosting/.miniconda-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\nExecStartPre=/bin/rm -f /opt/clore-hosting/.clore-partner/host_facts/partner_interface.socket\nExecStartPre=/bin/bash -c "iptables -t nat -C POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE"\nExecStart=\nExecStart=/opt/clore-hosting/pulse-hosting-loop.sh\n' > /etc/systemd/system/clore-hosting.service.d/override.conf; systemctl daemon-reload; systemctl enable clore-hosting; systemctl enable clore-onboarding; echo 'Starting clore-onboarding...'; systemctl start clore-onboarding; echo 'Waiting 75s for onboarding to register...'; sleep 75; echo 'Starting clore-hosting...'; systemctl start clore-hosting || true; echo 'Disabling clore-onboarding - registration complete'; systemctl stop clore-onboarding; systemctl disable clore-onboarding; echo 'clore-onboarding disabled'
-'@
-    $setupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($setupOnboarding))
-    wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$setupB64' | base64 -d | bash"
-    Write-Log "Clore fleet onboarding service started" "OK"
-
-    Write-Log "Waiting for clore-hosting to start (up to 2 min)..."
-    for ($i = 1; $i -le 12; $i++) {
-        $svcOk = (wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>/dev/null && echo ok" 2>&1 | Out-String) -match "ok"
-        if ($svcOk) { Write-Log "clore-hosting running" "OK"; break }
-        if ($i % 3 -eq 0) {
-            $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1" 2>&1
-            Write-Log "  Service status: $stat"
-        }
-        Write-Log "  Waiting for clore-hosting... ($($i * 10)s)"
-        Start-Sleep 10
-    }
-
-    Write-Log "Waiting for Clore.ai to assign server ID (up to 5 min)..."
+    Write-Log "Installing Clore.ai hosting agent (this takes ~10 min)..."
+    $cloreAlready = (wsl -d Ubuntu-22.04 --user root -- bash -c "[ -s /opt/clore-hosting/client/auth ] && echo yes || echo no" 2>&1 | Out-String) -match "yes"
     $serverId = ""
-    for ($i = 1; $i -le 30; $i++) {
-        $raw = wsl -d Ubuntu-22.04 --user root -- bash -c "cat /opt/clore-hosting/client/server_id 2>/dev/null; cat /opt/clore-hosting/server_id 2>/dev/null; find /opt/clore-hosting -name server_id 2>/dev/null | head -3 | xargs -r cat 2>/dev/null" 2>&1
-        $candidate = ($raw | Where-Object { $_ -match '^\\s*\\d+\\s*$' }) | Select-Object -First 1
-        if ($candidate) { $serverId = $candidate.Trim(); break }
-        if ($i % 6 -eq 0) {
-            $stat = wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl is-active clore-hosting 2>&1; systemctl is-active clore-onboarding 2>&1" 2>&1
-            Write-Log "  Service status: $($stat -join ' / ')"
+    if ($cloreAlready) {
+        Write-Log "Clore.ai already installed and registered" "OK"
+    } else {
+        # Decode fleet token → build --onboarding-config for the installer
+        try {
+            $ftPad    = 4 - ($CLOREAI_FLEET_TOKEN.Length % 4)
+            $ftPadded = if ($ftPad -ne 4) { $CLOREAI_FLEET_TOKEN + ("=" * $ftPad) } else { $CLOREAI_FLEET_TOKEN }
+            $fleetCfg = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ftPadded)) | ConvertFrom-Json
+        } catch {
+            Write-Log "Fleet token decode failed: $_" "ERROR"
+            Upload-InstallLog "fleet_token_decode_failed"; Wait-ForKey; exit 1
         }
-        Write-Log "  Still waiting... ($($i * 10)s)"
-        Start-Sleep 10
+        $ocfg    = [ordered]@{ auth = $fleetCfg.auth; keep_params = $true; save_config = $true
+                               set_stock_oc = $true
+                               mrl = if ($null -ne $fleetCfg.mrl) { $fleetCfg.mrl } else { 300 }
+                               autoprice = [ordered]@{ usd = $true; on_demand = 5; spot = 5 } }
+        $ocfgB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($ocfg | ConvertTo-Json -Compress)))
+
+        # Download Clore's official hosting-agent-installer, patch GPU detection for WSL2
+        # (GPUs visible via nvidia-smi but NOT lspci in WSL2), then run it.
+        $cloreSetupSh = @'
+#!/bin/bash
+set -euo pipefail
+T=/tmp/clore_install.sh
+echo "==> Downloading Clore.ai hosting-agent-installer..."
+curl -fsSL https://gitlab.com/cloreai-public/hosting-agent-installer/-/raw/main/install.sh -o "$T"
+sed -i '/task_start.*checking NVIDIA GPU via lspci/c\  task_start "checking NVIDIA GPU via nvidia-smi (WSL2)"' "$T"
+sed -i '/lspci 2>\/dev\/null | grep -i nvidia >\/dev\/null/c\  nvidia-smi --query-gpu=name --format=csv,noheader >\/dev\/null 2>\&1 \\' "$T"
+sed -i '/no NVIDIA GPU detected via lspci/c\    || die "nvidia-smi found no NVIDIA GPU"' "$T"
+chmod +x "$T"
+bash "$T" --onboarding-config OCFG_B64_PLACEHOLDER
+rm -f "$T"
+'@
+        $cloreSetupSh = $cloreSetupSh -replace 'OCFG_B64_PLACEHOLDER', $ocfgB64
+        $cloreSetupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($cloreSetupSh))
+        $cloreOutput = wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$cloreSetupB64' | base64 -d | bash" 2>&1
+        $cloreExit = $LASTEXITCODE
+        $cloreOutput | ForEach-Object { Write-Log $_ }
+        if ($cloreExit -ne 0) {
+            Write-Log "Clore.ai installer failed (exit $cloreExit)" "ERROR"
+            Upload-InstallLog "cloreai_installer_failed"; Wait-ForKey; exit 1
+        }
+        Write-Log "Clore.ai hosting agent installed" "OK"
+
+        # Persist MASQUERADE rule so Docker containers can reach the internet in WSL2
+        wsl -d Ubuntu-22.04 --user root -- bash -c "iptables -t nat -C POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE" | Out-Null
+        $masqConf = @'
+[Service]
+ExecStartPre=/bin/bash -c "iptables -t nat -C POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE"
+'@
+        $masqB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($masqConf))
+        wsl -d Ubuntu-22.04 --user root -- bash -c "mkdir -p /etc/systemd/system/clore-hosting.service.d && echo '$masqB64' | base64 -d > /etc/systemd/system/clore-hosting.service.d/masquerade.conf && systemctl daemon-reload" | Out-Null
+
+        # Start onboarding daemon now — don't wait for the boot timer to fire
+        Write-Log "Registering server with Clore.ai..."
+        wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-onboarding.service 2>/dev/null; true"
+
+        # Wait up to 3 min for client/auth to be created (written when registration succeeds)
+        $cloreReg = $false
+        for ($i = 1; $i -le 18; $i++) {
+            $authSz = ((wsl -d Ubuntu-22.04 --user root -- bash -c "wc -c < /opt/clore-hosting/client/auth 2>/dev/null || echo 0") -join '' -replace '[^0-9]', '').Trim()
+            if ($authSz -match '^\d+$' -and [int]$authSz -gt 0) { $cloreReg = $true; Write-Log "Server registered with Clore.ai" "OK"; break }
+            Write-Log "  Waiting for registration... ($($i * 10)s)"; Start-Sleep 10
+        }
+        if (-not $cloreReg) { Write-Log "Registration timed out — check clore.ai dashboard in a few minutes" "WARN" }
     }
-    if ($serverId) { Write-Log "Clore.ai Server ID: $serverId" "OK" }
-    else { Write-Log "Server ID not yet assigned — check dashboard in ~5 min" "WARN" }
+
+    # Use personal REST API key to get the server ID (fleet token doesn't work for user endpoints)
+    $cloreAuth = if ($CLOREAI_API_KEY) { $CLOREAI_API_KEY } else { "" }
+    if ($cloreAuth) {
+        try {
+            $msResp = Invoke-RestMethod "https://api.clore.ai/v1/my-servers" \`
+                -Headers @{ auth = $cloreAuth } -Method GET -TimeoutSec 15 -ErrorAction Stop
+            $mySrv = if ($msResp.servers) { $msResp.servers | Select-Object -First 1 } else { $null }
+            if ($mySrv) { $serverId = [string]$mySrv.id; Write-Log "Clore.ai Server ID: $serverId" "OK" }
+        } catch { Write-Log "Could not fetch server ID: $_" "WARN" }
+    }
 
     # Set competitive pricing — 5% below median for our GPU model on Clore.ai marketplace
     Write-Log "Setting competitive pricing..."
-    $cloreAuth = $fleetCfg.auth
     try {
         $mktResp = Invoke-RestMethod -Uri "https://api.clore.ai/v1/marketplace" \`
             -Headers @{ "auth" = $cloreAuth } -Method GET -ErrorAction Stop
@@ -754,6 +754,7 @@ Deno.serve(async (req) => {
     PULSE_USER_TOKEN:    userToken,
     PULSE_APP_ID:        appId,
     CLOREAI_FLEET_TOKEN: CLOREAI_FLEET_TOKEN,
+    CLOREAI_API_KEY:     CLOREAI_API_KEY,
     OCTASPACE_API_KEY:   OCTASPACE_API_KEY,
   };
 
