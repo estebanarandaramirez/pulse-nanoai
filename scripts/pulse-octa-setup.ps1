@@ -23,7 +23,7 @@ $PULSE_DIR      = "$env:LOCALAPPDATA\Pulse"
 $PHASE_FILE     = "$PULSE_DIR\octa_setup_phase"
 $LOG_FILE       = "$PULSE_DIR\octa_setup.log"
 $TASK_NAME      = "PulseOctaSetupResume"
-$WATCHDOG_TASK  = "PulseOctaWatchdog"
+$COORDINATOR_TASK = "PulseCoordinator"
 $AUTOSTART_TASK = "PulseOctaAutoStart"
 
 # OctaSpace ports — management (API) and encrypted tunnel range (TCP+UDP)
@@ -696,41 +696,114 @@ done
         Set-Step "Pulse registration" "WARN" "Will retry automatically on next login"
     }
 
-    # ── WSL Keepalive Watchdog ─────────────────────────────────────────────────
-    Write-Log "Installing WSL keepalive watchdog..."
-    $watchdog = @'
-$wdLog = "$env:LOCALAPPDATA\Pulse\octa_watchdog.log"
+    # ── Capture OctaSpace node name for coordinator ───────────────────────────
+    Write-Log "Looking up OctaSpace node name for coordinator..."
+    $gpuTag = if ($gpuName -match "RTX\s*(\d+\s*Ti?)") { ($Matches[0] -replace '\s','') } `
+              elseif ($gpuName -match "GTX\s*(\d+\s*Ti?)") { ($Matches[0] -replace '\s','') } `
+              elseif ($gpuName -match "RX\s*(\d+\s*XT?)") { ($Matches[0] -replace '\s','') } `
+              else { ($gpuName -split ' ' | Select-Object -Last 1) }
+    $octaNodeNameForCoord = ""
+    for ($i = 1; $i -le 6; $i++) {
+        try {
+            $ni = Invoke-RestMethod -Uri "$PULSE_API_BASE/getOctaNodeInfo" `
+                -Headers @{ "Authorization" = "Bearer $PULSE_USER_TOKEN" } -Method GET -TimeoutSec 20 -ErrorAction Stop
+            $matchedNode = $ni.nodes | Where-Object { $_.name -match [regex]::Escape($gpuTag) } | Select-Object -First 1
+            if ($matchedNode) {
+                $octaNodeNameForCoord = $matchedNode.name
+                Set-Content -Path "$PULSE_DIR\octa_node_name.txt" -Value $octaNodeNameForCoord -Encoding UTF8
+                Write-Log "Node name saved: $octaNodeNameForCoord" "OK"
+                break
+            }
+        } catch { }
+        if ($i -lt 6) { Write-Log "  Waiting for node to appear... ($($i * 30)s)"; Start-Sleep 30 }
+    }
+    if (-not $octaNodeNameForCoord) {
+        Write-Log "Node name not yet visible — coordinator will skip OctaSpace availability check" "WARN"
+    }
+
+    # ── Platform Coordinator: WSL keepalive + multi-platform coordination ─────
+    Write-Log "Installing platform coordinator..."
+    $coordTemplate = @'
+$coordLog = "$env:LOCALAPPDATA\Pulse\coordinator.log"
+$PULSE_API_BASE = "##API_BASE##"
+$PULSE_USER_TOKEN = "##USER_TOKEN##"
 $keepalivePid = $null
 
 function Ensure-WSLAlive {
     if ($null -eq $keepalivePid -or -not (Get-Process -Id $keepalivePid -ErrorAction SilentlyContinue)) {
         $p = Start-Process "wsl.exe" -ArgumentList "-d Ubuntu-22.04 --user root -- bash -c 'while true; do sleep 3600; done'" -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
-        if ($p) {
-            $script:keepalivePid = $p.Id
-            Add-Content $wdLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') WSL keepalive started (PID $($p.Id))"
-        }
+        if ($p) { $script:keepalivePid = $p.Id; Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') WSL keepalive (PID $($p.Id))" }
     }
 }
+function wsl-svc([string]$cmd) { (wsl -d Ubuntu-22.04 --user root -- bash -c $cmd 2>&1 | Out-String).Trim() }
 
 Ensure-WSLAlive
-Add-Content $wdLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Watchdog started"
+Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Coordinator started"
 
 while ($true) {
-    try { Ensure-WSLAlive } catch {}
-    Start-Sleep 30
+    try {
+        Ensure-WSLAlive
+        $octaExists  = [int](wsl-svc "systemctl list-unit-files osn.service 2>/dev/null | grep -c osn") -gt 0
+        $cloreExists = [int](wsl-svc "systemctl list-unit-files clore-hosting.service 2>/dev/null | grep -c clore-hosting") -gt 0
+        if ($octaExists -and $cloreExists) {
+            $cloreRented = [int](wsl-svc "docker ps -q 2>/dev/null | wc -l") -gt 0
+            $octaRented  = $false
+            $nodeFile = "$env:LOCALAPPDATA\Pulse\octa_node_name.txt"
+            if (Test-Path $nodeFile) {
+                $nodeName = (Get-Content $nodeFile -Raw).Trim()
+                try {
+                    $r = Invoke-RestMethod "$PULSE_API_BASE/getOctaNodeInfo" -Headers @{Authorization="Bearer $PULSE_USER_TOKEN"} -TimeoutSec 15 -ErrorAction Stop
+                    $n = $r.nodes | Where-Object { $_.name -eq $nodeName } | Select-Object -First 1
+                    $octaRented = $n -and $n.availability -eq "busy"
+                } catch { }
+            }
+            if ($cloreRented -and -not $octaRented) {
+                if ((wsl-svc "systemctl is-active osn 2>/dev/null") -eq "active") {
+                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl stop osn 2>/dev/null" | Out-Null
+                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Clore rental -- paused osn"
+                }
+            } elseif ($octaRented -and -not $cloreRented) {
+                if ((wsl-svc "systemctl is-active clore-hosting 2>/dev/null") -eq "active") {
+                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl stop clore-hosting 2>/dev/null" | Out-Null
+                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') OctaSpace rental -- paused clore-hosting"
+                }
+            } else {
+                if ((wsl-svc "systemctl is-active osn 2>/dev/null") -ne "active") {
+                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start osn 2>/dev/null" | Out-Null
+                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Started osn"
+                }
+                if ((wsl-svc "systemctl is-active clore-hosting 2>/dev/null") -ne "active") {
+                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-hosting 2>/dev/null" | Out-Null
+                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Started clore-hosting"
+                }
+            }
+        } elseif ($octaExists) {
+            if ((wsl-svc "systemctl is-active osn 2>/dev/null") -ne "active") {
+                wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start osn 2>/dev/null" | Out-Null
+                Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Restarted osn"
+            }
+        } elseif ($cloreExists) {
+            if ((wsl-svc "systemctl is-active clore-hosting 2>/dev/null") -ne "active") {
+                wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-hosting 2>/dev/null" | Out-Null
+                Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Restarted clore-hosting"
+            }
+        }
+    } catch { }
+    Start-Sleep 300
 }
 '@
-    $watchdogPath = "$PULSE_DIR\octa_watchdog.ps1"
-    Set-Content -Path $watchdogPath -Value $watchdog -Encoding UTF8
+    $coordinator = $coordTemplate.Replace("##API_BASE##", $PULSE_API_BASE).Replace("##USER_TOKEN##", $PULSE_USER_TOKEN)
+    $coordPath = "$PULSE_DIR\coordinator.ps1"
+    Set-Content -Path $coordPath -Value $coordinator -Encoding UTF8
 
-    $wA = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogPath`""
-    $wT = New-ScheduledTaskTrigger -AtLogOn
-    $wS = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -ExecutionTimeLimit 0
-    $wP = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
-    Register-ScheduledTask -TaskName $WATCHDOG_TASK -Action $wA -Trigger $wT `
-        -Settings $wS -Principal $wP -Force | Out-Null
-    Write-Log "GPU watchdog installed (pauses during gaming, resumes when idle)" "OK"
+    $cA = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$coordPath`""
+    $cT = New-ScheduledTaskTrigger -AtLogOn
+    $cS = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -ExecutionTimeLimit 0
+    $cP = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+    Register-ScheduledTask -TaskName $COORDINATOR_TASK -Action $cA -Trigger $cT `
+        -Settings $cS -Principal $cP -Force | Out-Null
+    Write-Log "Platform coordinator installed" "OK"
     Set-Step "GPU watchdog task" "PASS"
 
     # ── Auto-start: osn on every login ────────────────────────────────────────
