@@ -737,8 +737,32 @@ function Ensure-WSLAlive {
 }
 function wsl-svc([string]$cmd) { (wsl -d Ubuntu-22.04 --user root -- bash -c $cmd 2>&1 | Out-String).Trim() }
 
+function Set-CloreAvailability([bool]$available) {
+    $keyFile    = "$env:LOCALAPPDATA\Pulse\clore_api_key.txt"
+    $configFile = "$env:LOCALAPPDATA\Pulse\clore_server_config.json"
+    if (-not (Test-Path $keyFile) -or -not (Test-Path $configFile)) { return }
+    try {
+        $apiKey = (Get-Content $keyFile -Raw).Trim()
+        $cfg    = Get-Content $configFile -Raw | ConvertFrom-Json
+        $body   = (@{ id = [int]$cfg.id; name = [string]$cfg.name; availability = $available; mrl = [int]$cfg.mrl; on_demand = [double]$cfg.on_demand; spot = [double]$cfg.spot } | ConvertTo-Json -Compress)
+        Invoke-RestMethod "https://api.clore.ai/v1/set_server_settings" -Method POST -Headers @{ auth = $apiKey; 'Content-Type' = 'application/json' } -Body $body -TimeoutSec 15 -ErrorAction Stop | Out-Null
+        Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Clore availability set to $available"
+    } catch { Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Set-CloreAvailability error: $_" }
+}
+
+function Set-OctaMaintenance([string]$nodeId, [bool]$maintenance) {
+    if (-not $nodeId) { return }
+    try {
+        $body = (@{ node_id = $nodeId; maintenance = $maintenance } | ConvertTo-Json -Compress)
+        Invoke-RestMethod "$PULSE_API_BASE/setOctaNodeMaintenance" -Method POST -Headers @{ Authorization = "Bearer $PULSE_USER_TOKEN"; 'Content-Type' = 'application/json' } -Body $body -TimeoutSec 25 -ErrorAction Stop | Out-Null
+        Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') OctaSpace maintenance set to $maintenance"
+    } catch { Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Set-OctaMaintenance error: $_" }
+}
+
 Ensure-WSLAlive
 Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Coordinator started"
+$prevCloreRented = $null
+$prevOctaRented  = $null
 
 while ($true) {
     try {
@@ -748,45 +772,34 @@ while ($true) {
         if ($octaExists -and $cloreExists) {
             $cloreRented = [int](wsl-svc "docker ps -q 2>/dev/null | wc -l") -gt 0
             $octaRented  = $false
+            $octaNodeId  = ""
             $nodeFile = "$env:LOCALAPPDATA\Pulse\octa_node_name.txt"
             if (Test-Path $nodeFile) {
                 $nodeName = (Get-Content $nodeFile -Raw).Trim()
                 try {
-                    $r = Invoke-RestMethod "$PULSE_API_BASE/getOctaNodeInfo" -Headers @{Authorization="Bearer $PULSE_USER_TOKEN"} -TimeoutSec 15 -ErrorAction Stop
+                    $r = Invoke-RestMethod "$PULSE_API_BASE/getOctaNodeInfo" -Headers @{ Authorization = "Bearer $PULSE_USER_TOKEN" } -TimeoutSec 15 -ErrorAction Stop
                     $n = $r.nodes | Where-Object { $_.name -eq $nodeName } | Select-Object -First 1
-                    $octaRented = $n -and $n.availability -eq "busy"
+                    if ($n) { $octaRented = ($n.availability -eq "busy"); $octaNodeId = [string]$n.node_id }
                 } catch { }
             }
+            $changed = ($cloreRented -ne $prevCloreRented) -or ($octaRented -ne $prevOctaRented)
             if ($cloreRented -and -not $octaRented) {
-                if ((wsl-svc "systemctl is-active osn 2>/dev/null") -eq "active") {
-                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl stop osn 2>/dev/null" | Out-Null
-                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Clore rental -- paused osn"
-                }
+                if ($changed) { Set-OctaMaintenance $octaNodeId $true }
+                wsl-svc "systemctl is-active --quiet clore-hosting 2>/dev/null || systemctl start clore-hosting 2>/dev/null"
             } elseif ($octaRented -and -not $cloreRented) {
-                if ((wsl-svc "systemctl is-active clore-hosting 2>/dev/null") -eq "active") {
-                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl stop clore-hosting 2>/dev/null" | Out-Null
-                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') OctaSpace rental -- paused clore-hosting"
-                }
+                if ($changed) { Set-CloreAvailability $false }
+                wsl-svc "systemctl is-active --quiet osn 2>/dev/null || systemctl start osn 2>/dev/null"
             } else {
-                if ((wsl-svc "systemctl is-active osn 2>/dev/null") -ne "active") {
-                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start osn 2>/dev/null" | Out-Null
-                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Started osn"
-                }
-                if ((wsl-svc "systemctl is-active clore-hosting 2>/dev/null") -ne "active") {
-                    wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-hosting 2>/dev/null" | Out-Null
-                    Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Started clore-hosting"
-                }
+                if ($changed) { Set-OctaMaintenance $octaNodeId $false; Set-CloreAvailability $true }
+                wsl-svc "systemctl is-active --quiet osn 2>/dev/null || systemctl start osn 2>/dev/null"
+                wsl-svc "systemctl is-active --quiet clore-hosting 2>/dev/null || systemctl start clore-hosting 2>/dev/null"
             }
+            $prevCloreRented = $cloreRented
+            $prevOctaRented  = $octaRented
         } elseif ($octaExists) {
-            if ((wsl-svc "systemctl is-active osn 2>/dev/null") -ne "active") {
-                wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start osn 2>/dev/null" | Out-Null
-                Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Restarted osn"
-            }
+            wsl-svc "systemctl is-active --quiet osn 2>/dev/null || systemctl start osn 2>/dev/null"
         } elseif ($cloreExists) {
-            if ((wsl-svc "systemctl is-active clore-hosting 2>/dev/null") -ne "active") {
-                wsl -d Ubuntu-22.04 --user root -- bash -c "systemctl start clore-hosting 2>/dev/null" | Out-Null
-                Add-Content $coordLog "$(Get-Date -f 'yyyy-MM-dd HH:mm') Restarted clore-hosting"
-            }
+            wsl-svc "systemctl is-active --quiet clore-hosting 2>/dev/null || systemctl start clore-hosting 2>/dev/null"
         }
     } catch { }
     Start-Sleep 300
