@@ -473,7 +473,7 @@ rm -f /usr/local/bin/nvidia-smi; NV=/usr/lib/wsl/lib/nvidia-smi; [ ! -f "$NV" ] 
     } catch { Write-Log "Pulse registration failed (will retry on next start): $_" "WARN" }
 
     $coordTemplate = @'
-$coordLog = "$env:LOCALAPPDATA\Pulse\coordinator.log"
+$coordLog = "$env:LOCALAPPDATA\\Pulse\\coordinator.log"
 $PULSE_API_BASE = "##API_BASE##"
 $PULSE_USER_TOKEN = "##USER_TOKEN##"
 $keepalivePid = $null
@@ -497,7 +497,7 @@ while ($true) {
         if ($octaExists -and $cloreExists) {
             $cloreRented = [int](wsl-svc "docker ps -q 2>/dev/null | wc -l") -gt 0
             $octaRented  = $false
-            $nodeFile = "$env:LOCALAPPDATA\Pulse\octa_node_name.txt"
+            $nodeFile = "$env:LOCALAPPDATA\\Pulse\\octa_node_name.txt"
             if (Test-Path $nodeFile) {
                 $nodeName = (Get-Content $nodeFile -Raw).Trim()
                 try {
