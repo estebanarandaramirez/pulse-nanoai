@@ -361,14 +361,128 @@ rm -f "$T"
         }
         Write-Log "Clore.ai hosting agent installed" "OK"
 
-        # Persist MASQUERADE rule so Docker containers can reach the internet in WSL2
-        wsl -d Ubuntu-22.04 --user root -- bash -c "iptables -t nat -C POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE" | Out-Null
-        $masqConf = @'
-[Service]
-ExecStartPre=/bin/bash -c "iptables -t nat -C POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 172.16.0.0/12 ! -d 172.16.0.0/12 -j MASQUERADE"
+        # WSL2 mirrored networking: MASQUERADE in nat POSTROUTING never fires for Docker
+        # bridge traffic. Deploy a transparent TCP proxy that intercepts container ->
+        # internet TCP via iptables DNAT in nat PREROUTING and relays through WSL2 host.
+        Write-Log "Installing transparent proxy for Docker container networking..."
+        $proxyPy = @'
+#!/usr/bin/env python3
+import socket, struct, threading, subprocess, time
+
+SO_ORIGINAL_DST = 80
+PROXY_PORT = 44300
+
+def log(msg): print(f"[clore-proxy] {msg}", flush=True)
+
+def get_dst(sock):
+    d = sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, 16)
+    return socket.inet_ntoa(d[4:8]), struct.unpack(">H", d[2:4])[0]
+
+def relay(src, dst):
+    try:
+        while True:
+            d = src.recv(16384)
+            if not d: break
+            dst.sendall(d)
+    except: pass
+    finally:
+        try: src.shutdown(socket.SHUT_WR)
+        except: pass
+
+def handle(conn, addr):
+    try:
+        ip, port = get_dst(conn)
+        log(f"relay {addr[0]}:{addr[1]} -> {ip}:{port}")
+        out = socket.create_connection((ip, port), timeout=30)
+        threading.Thread(target=relay, args=(out, conn), daemon=True).start()
+        relay(conn, out)
+    except Exception as e:
+        log(f"error: {e}")
+    finally:
+        try: conn.close()
+        except: pass
+
+def detect_network(max_wait=600):
+    log("Waiting for Clore monitoring container...")
+    t0 = time.time()
+    while time.time() - t0 < max_wait:
+        try:
+            ps = subprocess.run(["docker", "ps", "--format", "{{.ID}}\t{{.Names}}"],
+                                capture_output=True, text=True, timeout=10).stdout
+            for line in ps.strip().split("\n"):
+                p = line.split("\t")
+                if len(p) < 2: continue
+                cid, name = p[0].strip(), p[1].strip()
+                if "monitor" not in name.lower() and "clore" not in name.lower(): continue
+                info = subprocess.run(
+                    ["docker", "inspect", "--format",
+                     "{{range .NetworkSettings.Networks}}{{.NetworkID}}\t{{.Gateway}}\n{{end}}", cid],
+                    capture_output=True, text=True, timeout=10).stdout
+                for il in info.strip().split("\n"):
+                    pp = il.strip().split("\t")
+                    if len(pp) == 2 and pp[1].strip():
+                        gw = pp[1].strip()
+                        br = "br-" + pp[0].strip()[:12]
+                        log(f"Found: {name} gw={gw} bridge={br}")
+                        return gw, br
+        except Exception as e:
+            log(f"detect: {e}")
+        time.sleep(10)
+    log("Timeout - fallback to 172.18.0.1")
+    return "172.18.0.1", "br+"
+
+def apply_rules(gw, br):
+    parts = gw.split(".")
+    subnet = parts[0] + "." + parts[1] + ".0.0/16"
+    to_dst = gw + ":" + str(PROXY_PORT)
+    def ipt(*a): subprocess.run(["iptables"] + list(a), capture_output=True)
+    ipt("-t", "nat", "-D", "PREROUTING", "-i", br, "-s", subnet,
+        "-p", "tcp", "!", "-d", subnet, "-j", "DNAT", "--to-destination", to_dst)
+    ipt("-D", "INPUT", "-s", subnet, "-d", gw, "-p", "tcp",
+        "--dport", str(PROXY_PORT), "-j", "ACCEPT")
+    r1 = subprocess.run(["iptables", "-t", "nat", "-I", "PREROUTING", "1",
+                         "-i", br, "-s", subnet, "-p", "tcp", "!", "-d", subnet,
+                         "-j", "DNAT", "--to-destination", to_dst], capture_output=True)
+    r2 = subprocess.run(["iptables", "-I", "INPUT", "1", "-s", subnet, "-d", gw,
+                         "-p", "tcp", "--dport", str(PROXY_PORT), "-j", "ACCEPT"],
+                        capture_output=True)
+    log(f"iptables: DNAT={r1.returncode == 0} INPUT={r2.returncode == 0}")
+
+gw, br = detect_network()
+apply_rules(gw, br)
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.setsockopt(socket.IPPROTO_IP, socket.IP_TRANSPARENT, 1)
+srv.bind((gw, PROXY_PORT))
+srv.listen(128)
+log(f"Listening on {gw}:{PROXY_PORT}")
+while True:
+    try:
+        conn, addr = srv.accept()
+        threading.Thread(target=handle, args=(conn, addr), daemon=True).start()
+    except Exception as e:
+        log(f"accept: {e}")
+        time.sleep(1)
 '@
-        $masqB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($masqConf))
-        wsl -d Ubuntu-22.04 --user root -- bash -c "mkdir -p /etc/systemd/system/clore-hosting.service.d && echo '$masqB64' | base64 -d > /etc/systemd/system/clore-hosting.service.d/masquerade.conf && systemctl daemon-reload" | Out-Null
+        $proxySvc = @'
+[Unit]
+Description=Clore Transparent Proxy (WSL2 Docker networking fix)
+After=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/clore-transparent-proxy.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+'@
+        $proxyPyB64  = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($proxyPy))
+        $proxySvcB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($proxySvc))
+        wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$proxyPyB64' | base64 -d > /opt/clore-transparent-proxy.py && chmod 755 /opt/clore-transparent-proxy.py" | Out-Null
+        wsl -d Ubuntu-22.04 --user root -- bash -c "echo '$proxySvcB64' | base64 -d > /etc/systemd/system/clore-proxy.service && systemctl daemon-reload && systemctl enable --now clore-proxy.service" 2>&1 | ForEach-Object { Write-Log $_ }
+        Write-Log "Transparent proxy installed and started" "OK"
 
         # Start onboarding daemon now — don't wait for the boot timer to fire
         Write-Log "Registering server with Clore.ai..."
