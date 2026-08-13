@@ -388,7 +388,7 @@ ExecStartPre=/bin/bash -c "iptables -t nat -C POSTROUTING -s 172.16.0.0/12 ! -d 
     $cloreAuth = if ($CLOREAI_API_KEY) { $CLOREAI_API_KEY } else { "" }
     if ($cloreAuth) {
         try {
-            $msResp = Invoke-RestMethod "https://api.clore.ai/v1/my-servers" \`
+            $msResp = Invoke-RestMethod "https://api.clore.ai/v1/my_servers" \`
                 -Headers @{ auth = $cloreAuth } -Method GET -TimeoutSec 15 -ErrorAction Stop
             $mySrv = if ($msResp.servers) { $msResp.servers | Select-Object -First 1 } else { $null }
             if ($mySrv) { $serverId = [string]$mySrv.id; Write-Log "Clore.ai Server ID: $serverId" "OK" }

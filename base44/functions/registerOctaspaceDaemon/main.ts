@@ -104,12 +104,25 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Backfill node_id from the claim result into the GPU record
+    const claimedNodeId = claimResult?.node_id ? String(claimResult.node_id) : null;
+    const existingNodeId = gpuRecord.node_id ?? null;
+    if (claimedNodeId && !existingNodeId) {
+      const { error: nodeIdErr } = await supabase
+        .from('gpus')
+        .update({ node_id: claimedNodeId })
+        .eq('id', gpuRecord.id);
+      if (!nodeIdErr) gpuRecord = { ...gpuRecord, node_id: claimedNodeId };
+      else console.error('node_id backfill failed:', nodeIdErr.message);
+    }
+
     return Response.json({
       success: true,
       gpu_id: gpuRecord.gpu_id,
       gpu_model,
       vram_gb: vram,
       octa_node_token: nodeToken,
+      node_id: gpuRecord.node_id ?? null,
       active_platform: platform,
       user_rate_hr: userRateHr,
       gross_rate_hr: ratePerHour,
