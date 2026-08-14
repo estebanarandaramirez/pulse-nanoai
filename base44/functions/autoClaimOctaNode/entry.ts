@@ -159,6 +159,78 @@ async function findNodeIdByName(
   return first ? first[1] : null;
 }
 
+// Delete a node from cube.octa.computer
+async function deleteNodeOnCube(
+  jar: CookieJar,
+  commonHeaders: Record<string, string>,
+  nodeId: string,
+): Promise<{ success: boolean; message: string; debug?: string }> {
+  // GET the node page to grab CSRF token
+  const nodeRes = await fetch(`${CUBE_BASE}/hosting/nodes/${nodeId}`, {
+    redirect: 'follow',
+    headers: { ...commonHeaders, 'Cookie': jar.toString() },
+  });
+  jar.ingest(nodeRes.headers);
+
+  if (nodeRes.url.includes('/sign_in')) {
+    return { success: false, message: 'Session expired when loading node page for deletion' };
+  }
+
+  const nodeHtml = await nodeRes.text();
+  const csrf = extractCsrf(nodeHtml);
+
+  if (!csrf) {
+    return {
+      success: false,
+      message: `Could not extract CSRF from node ${nodeId} page`,
+      debug: `url=${nodeRes.url} len=${nodeHtml.length}`,
+    };
+  }
+
+  // Rails delete: POST to /hosting/nodes/:id with _method=delete
+  const deleteUrl = `${CUBE_BASE}/hosting/nodes/${nodeId}`;
+  const body = new URLSearchParams({
+    '_method': 'delete',
+    'authenticity_token': csrf,
+  });
+
+  const delRes = await fetch(deleteUrl, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: {
+      ...commonHeaders,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': jar.toString(),
+      'Origin': CUBE_BASE,
+      'Referer': `${CUBE_BASE}/hosting/nodes/${nodeId}`,
+      'X-CSRF-Token': csrf,
+    },
+    body: body.toString(),
+  });
+  jar.ingest(delRes.headers);
+  const delHtml = await delRes.text();
+
+  // Success: Rails redirects back to /hosting/nodes list after delete
+  const landedUrl = delRes.url.replace(/\?.*$/, '');
+  const backOnList = landedUrl.endsWith('/hosting/nodes') || landedUrl.endsWith('/nodes');
+  if (
+    delRes.status < 400 &&
+    (backOnList ||
+      delHtml.includes('successfully deleted') ||
+      delHtml.includes('successfully destroyed') ||
+      delHtml.includes('Node was removed'))
+  ) {
+    return { success: true, message: `Node ${nodeId} deleted from cube.octa.computer` };
+  }
+
+  const errMatch = delHtml.match(/<div[^>]+flex-1[^>]*>\s*([^<]{5,}?)\s*<\/div>/i);
+  return {
+    success: false,
+    message: `Node ${nodeId} delete failed: ${errMatch?.[1]?.trim() ?? `HTTP ${delRes.status}`}`,
+    debug: `deleteUrl=${deleteUrl} finalUrl=${delRes.url} status=${delRes.status}`,
+  };
+}
+
 // Configure a node: enable Rental service and Enable service ports
 async function configureNode(
   jar: CookieJar,
@@ -569,8 +641,8 @@ Deno.serve(async (req) => {
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { node_token, node_name, node_id, auto_configure = true, list_nodes = false } = await req.json().catch(() => ({}));
-  if (!node_token && !node_id && !list_nodes) {
+  const { node_token, node_name, node_id, auto_configure = true, list_nodes = false, delete_node = false } = await req.json().catch(() => ({}));
+  if (!node_token && !node_id && !list_nodes && !delete_node) {
     return Response.json({ error: 'node_token, node_id, or list_nodes:true is required' }, { status: 400 });
   }
 
@@ -638,10 +710,17 @@ Deno.serve(async (req) => {
     }
 
     // configure_only mode: skip claim, go straight to configureNode with the given node_id
-    if (node_id && !node_token) {
+    if (node_id && !node_token && !delete_node) {
       const { jar, hdrs: commonHeaders } = await signInAndGetJar();
       const configResult = await configureNode(jar, commonHeaders, String(node_id));
       return Response.json({ success: configResult.success, node_id: String(node_id), configure_result: configResult });
+    }
+
+    // delete_node mode: sign in and delete the node by ID
+    if (delete_node && node_id) {
+      const { jar, hdrs: commonHeaders } = await signInAndGetJar();
+      const deleteResult = await deleteNodeOnCube(jar, commonHeaders, String(node_id));
+      return Response.json(deleteResult);
     }
 
     const result = await claimNodeOnCube(

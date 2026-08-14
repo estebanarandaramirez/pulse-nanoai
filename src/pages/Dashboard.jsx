@@ -80,7 +80,10 @@ export default function Dashboard() {
         const fleetRes = await base44.functions.invoke('getGPUFleet', { user_email: user.email });
         setMyGPUs(fleetRes.data?.gpus || []);
         setConfirmingDelete(null);
-        if (res.data?.platform_note) alert(res.data.platform_note);
+        const pd = res.data?.platform_delete;
+        if (pd && !pd.success && !pd.skipped) {
+          alert(`Removed from Pulse. Platform cleanup may need attention: ${pd.message ?? 'platform deletion failed'}`);
+        }
       } else {
         alert(`Delete failed: ${res.data?.error ?? 'unknown error'}`);
       }
