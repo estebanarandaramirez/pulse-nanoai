@@ -193,7 +193,7 @@ export default function Dashboard() {
 
   const loadEarningsLog = useCallback(async () => {
     try {
-      const res = await base44.functions.invoke('getEarningsLog', { days: 14 });
+      const res = await base44.functions.invoke('getEarningsLog', { days: 30 });
       if (res.data?.logs) setEarningsLog(res.data.logs);
       if (res.data?.all_time_total != null) setAllTimeEarnings(res.data.all_time_total);
     } catch {}
@@ -251,7 +251,7 @@ export default function Dashboard() {
   const projectedDaily = parseFloat((octaProjected + cloreProjected).toFixed(2));
 
   // Build last-7-days chart: $0 for days with no EarningsLog record (no gaps)
-  const hasActualData = earningsLog.length > 0;
+  const hasActualData = earningsLog.length > 0 || (allTimeEarnings != null && allTimeEarnings > 0);
   const last7 = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - 6 + i);
@@ -635,7 +635,8 @@ export default function Dashboard() {
                       <tbody>
                         {cloreServers.map((s, i) => {
                           const isRented = s.rented;
-                          const gpuRec = myGPUs.find(g => g.clore_server_id && String(g.clore_server_id) === String(s.server_id));
+                          const gpuRec = myGPUs.find(g => g.clore_server_id && String(g.clore_server_id) === String(s.server_id))
+                            ?? myGPUs.find(g => (g.active_platform ?? '').toLowerCase().includes('clore') && !g.clore_server_id);
                           const gpuId = gpuRec?.gpu_id;
                           const isConfirming = confirmingDelete === gpuId;
                           return (
