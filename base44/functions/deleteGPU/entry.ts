@@ -16,7 +16,16 @@ Deno.serve(async (req) => {
 
   const sb = createClient(supabaseUrl, supabaseKey);
 
-  // Only allow deleting GPUs owned by the requesting user
+  // Fetch the record first so we can return platform-specific cleanup notes
+  const { data: gpuRow } = await sb
+    .from('gpus')
+    .select('active_platform, clore_server_id, node_id')
+    .eq('gpu_id', gpu_id)
+    .eq('user_email', user.email)
+    .single();
+
+  if (!gpuRow) return Response.json({ error: 'GPU not found' }, { status: 404 });
+
   const { error } = await sb
     .from('gpus')
     .delete()
@@ -24,5 +33,12 @@ Deno.serve(async (req) => {
     .eq('user_email', user.email);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ success: true });
+
+  const platform = (gpuRow.active_platform ?? '').toLowerCase();
+  const octa_manual_required = platform === 'octaspace';
+  const platform_note = octa_manual_required
+    ? 'Node removed from Pulse. You must also manually delete it on cube.octa.computer — skip this and re-registering will fail with a stale token.'
+    : 'Server removed from Pulse. To fully remove it from Clore.ai, uninstall the hosting agent on the machine.';
+
+  return Response.json({ success: true, octa_manual_required, platform_note });
 });

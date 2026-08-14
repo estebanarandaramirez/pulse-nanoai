@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, ChevronDown, X, Pencil, Check, Info, Link2
+  Cpu, Coins, Activity, Server, TrendingUp, RefreshCw, ChevronDown, X, Pencil, Check, Info, Link2, Trash2
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
@@ -67,6 +67,26 @@ export default function Dashboard() {
   // ── OctaSpace price editing ──────────────────────────────────────────────────
   const [editingNodePrice, setEditingNodePrice] = useState(null); // { node_id, value }
   const [savingNodePrice, setSavingNodePrice]   = useState(null); // node_id string
+
+  // ── GPU deletion ────────────────────────────────────────────────────────────
+  const [confirmingDelete, setConfirmingDelete] = useState(null); // gpu_id string
+  const [deletingGpu, setDeletingGpu]           = useState(null); // gpu_id string
+
+  const deleteGpu = async (gpu_id) => {
+    setDeletingGpu(gpu_id);
+    try {
+      const res = await base44.functions.invoke('deleteGPU', { gpu_id });
+      if (res.data?.success) {
+        const fleetRes = await base44.functions.invoke('getGPUFleet', { user_email: user.email });
+        setMyGPUs(fleetRes.data?.gpus || []);
+        setConfirmingDelete(null);
+        if (res.data?.platform_note) alert(res.data.platform_note);
+      } else {
+        alert(`Delete failed: ${res.data?.error ?? 'unknown error'}`);
+      }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    setDeletingGpu(null);
+  };
 
   // ── OctaSpace node linking ───────────────────────────────────────────────────
   const [linkAssignments, setLinkAssignments] = useState({}); // { [octa_node_id]: gpu_base44_id }
@@ -424,14 +444,15 @@ export default function Dashboard() {
                   <div className="overflow-x-auto border-t border-border/50">
                     <table className="w-full table-fixed">
                       <colgroup>
-                        <col className="w-[26%]" /><col className="w-[20%]" /><col className="w-[10%]" />
-                        <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[17%]" />
+                        <col className="w-[24%]" /><col className="w-[18%]" /><col className="w-[10%]" />
+                        <col className="w-[10%]" /><col className="w-[16%]" /><col className="w-[16%]" /><col className="w-[6%]" />
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border bg-muted/5">
                           {["Node", "GPU", "Online", "Rental", "Rate/hr", "24h Income"].map(h => (
                             <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal truncate">{h}</th>
                           ))}
+                          <th className="px-2 py-2" />
                         </tr>
                       </thead>
                       <tbody>
@@ -442,8 +463,14 @@ export default function Dashboard() {
                           const rate = s.rate_per_hour ?? 0;
                           const isEditingThis = editingNodePrice?.node_id == nodeId;
                           const isSavingThis  = savingNodePrice == nodeId;
+                          const gpuRec = myGPUs.find(g => {
+                            const id = String(nodeId);
+                            return (g.platform_node_id && g.platform_node_id === id) || (g.node_id && g.node_id === id);
+                          });
+                          const gpuId = gpuRec?.gpu_id;
+                          const isConfirming = confirmingDelete === gpuId;
                           return (
-                            <tr key={nodeId ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                            <tr key={nodeId ?? i} className={`border-b border-border/50 hover:bg-muted/20 transition-colors ${isConfirming ? 'bg-red-950/20' : ''}`}>
                               <td className="px-4 py-2.5 text-[10px] font-mono text-foreground truncate" title={s.name}>
                                 {s.name ?? `Node ${i + 1}`}
                               </td>
@@ -511,6 +538,28 @@ export default function Dashboard() {
                               <td className="px-4 py-2.5 text-[10px] font-mono text-neon-green">
                                 ${(s.income_24h_usd ?? 0).toFixed(2)}
                               </td>
+                              <td className="px-2 py-2.5 text-right">
+                                {gpuId && (isConfirming ? (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <span className="text-[8px] font-mono text-red-400">DEL?</span>
+                                    <button onClick={() => deleteGpu(gpuId)} disabled={deletingGpu === gpuId}
+                                      className="text-red-400 hover:text-red-300 disabled:opacity-40">
+                                      {deletingGpu === gpuId ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />}
+                                    </button>
+                                    <button onClick={() => setConfirmingDelete(null)} className="text-muted-foreground hover:text-foreground">
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setConfirmingDelete(gpuId)}
+                                    title="Warning: this action is permanent. You will need to re-run the installer if you want to have a new node."
+                                    className="text-muted-foreground/40 hover:text-red-400 transition-colors"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                ))}
+                              </td>
                             </tr>
                           );
                         })}
@@ -572,21 +621,25 @@ export default function Dashboard() {
                   <div className="overflow-x-auto border-t border-border/50">
                     <table className="w-full table-fixed">
                       <colgroup>
-                        <col className="w-[26%]" /><col className="w-[20%]" /><col className="w-[10%]" />
-                        <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[17%]" />
+                        <col className="w-[24%]" /><col className="w-[18%]" /><col className="w-[10%]" />
+                        <col className="w-[10%]" /><col className="w-[16%]" /><col className="w-[16%]" /><col className="w-[6%]" />
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border bg-muted/5">
                           {["Node", "GPU", "Online", "Rental", "Rate/hr", "24h Income"].map(h => (
                             <th key={h} className="px-4 py-2 text-[9px] tracking-[1.5px] uppercase text-muted-foreground text-left font-normal truncate">{h}</th>
                           ))}
+                          <th className="px-2 py-2" />
                         </tr>
                       </thead>
                       <tbody>
                         {cloreServers.map((s, i) => {
                           const isRented = s.rented;
+                          const gpuRec = myGPUs.find(g => g.clore_server_id && String(g.clore_server_id) === String(s.server_id));
+                          const gpuId = gpuRec?.gpu_id;
+                          const isConfirming = confirmingDelete === gpuId;
                           return (
-                            <tr key={s.server_id ?? i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                            <tr key={s.server_id ?? i} className={`border-b border-border/50 hover:bg-muted/20 transition-colors ${isConfirming ? 'bg-red-950/20' : ''}`}>
                               <td className="px-4 py-2.5 text-[10px] font-mono text-foreground truncate" title={s.name}>
                                 {s.name ?? `Server #${s.server_id}`}
                               </td>
@@ -612,6 +665,28 @@ export default function Dashboard() {
                               </td>
                               <td className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground">
                                 $0.00
+                              </td>
+                              <td className="px-2 py-2.5 text-right">
+                                {gpuId && (isConfirming ? (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <span className="text-[8px] font-mono text-red-400">DEL?</span>
+                                    <button onClick={() => deleteGpu(gpuId)} disabled={deletingGpu === gpuId}
+                                      className="text-red-400 hover:text-red-300 disabled:opacity-40">
+                                      {deletingGpu === gpuId ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />}
+                                    </button>
+                                    <button onClick={() => setConfirmingDelete(null)} className="text-muted-foreground hover:text-foreground">
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setConfirmingDelete(gpuId)}
+                                    title="Warning: this action is permanent. You will need to re-run the installer if you want to have a new node."
+                                    className="text-muted-foreground/40 hover:text-red-400 transition-colors"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                ))}
                               </td>
                             </tr>
                           );
